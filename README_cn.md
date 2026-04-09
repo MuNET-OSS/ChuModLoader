@@ -4,13 +4,16 @@ CHUNITHM 的 mod 加载框架。通过代理 `version.dll`，在游戏启动时�
 
 > **[English](README.md)**
 
+> **v2.0.0** — 从 C++ 迁移到 Rust 重写。Mod 的 C ABI 接口完全向后兼容，已有的 mod DLL 无需任何修改即可使用。旧版 C++ 代码保留在 tag [`v1.0.0-cpp`](https://github.com/Applesaber/ChuModLoader/tree/v1.0.0-cpp)。
+
 ## 功能
 
 - `version.dll` 代理劫持，转发全部 17 个导出函数
 - 启动时自动扫描 `mods/*.dll`，无需配置
 - 可选的 Mod API（`chumod_init`），提供内存读写、AOB 扫描、inline hook、mod 间通信；不实现也能加载
 - `mods.ini` 按 mod 禁用
-- 内置 MinHook
+- 基于 [retour](https://crates.io/crates/retour) 的 inline hook
+- Rust 编写，mod 可用 Rust、C/C++ 或任何能编译 Win32 DLL 的语言
 
 ## 安装
 
@@ -36,7 +39,48 @@ mod_name.dll=0
 
 详见 [Mod 开发指南](docs/mod-development_cn.md) 和 [API 参考](docs/api-reference_cn.md)。
 
-### 快速上手
+### 快速上手（Rust）
+
+```rust
+use std::ffi::{c_char, c_void};
+
+#[repr(C)]
+pub struct ChuModInfo {
+    pub api_version: u32,
+    pub loader_version: *const c_char,
+    pub game_module: *const c_char,
+    pub game_base: usize,
+    pub game_size: u32,
+    pub text_base: usize,
+    pub text_size: u32,
+}
+
+#[repr(C)]
+pub struct ChuModAPI {
+    pub struct_size: u32,
+    pub log: Option<unsafe extern "C" fn(*const c_char, ...)>,
+    // ... 其他字段
+}
+
+#[no_mangle]
+pub extern "C" fn chumod_name() -> *const c_char {
+    b"My Rust Mod\0".as_ptr() as *const c_char
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn chumod_init(
+    info: *const ChuModInfo,
+    _api: *const ChuModAPI,
+) -> i32 {
+    // 初始化代码
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn chumod_shutdown() {}
+```
+
+### 快速上手（C/C++）
 
 ```c
 #include "chumod.h"
@@ -56,16 +100,16 @@ CHUMOD_API void chumod_shutdown() { }
 
 ## 构建
 
-需要 CMake 3.15+ 和 MSVC（Win32/x86）：
+需要 Rust 工具链和 `i686-pc-windows-msvc` target：
 
 ```bash
-cmake -B build -A Win32
-cmake --build build --config Release
+rustup toolchain install nightly --target i686-pc-windows-msvc
+cargo +nightly build --release
 ```
 
-也可以用 Visual Studio 直接打开文件夹 — 已包含 `CMakePresets.json`。
+输出：`target/i686-pc-windows-msvc/release/version.dll`
 
-输出：`build/bin/Release/version.dll`
+> **旧版 C++ 构建**（不再维护）：之前使用 CMake 3.15+ 和 MSVC 构建（`cmake -B build -A Win32 && cmake --build build --config Release`）。
 
 ## 工作原理
 
@@ -84,17 +128,19 @@ cmake --build build --config Release
 
 ```
 ChuModLoader/
-├── include/chumod.h           # Mod API 头文件
+├── include/chumod.h           # Mod API 头文件（C/C++ mod 使用）
 ├── src/
-│   ├── main.cpp                # version.dll 代理入口
-│   ├── loader.cpp              # mod 扫描加载
-│   ├── api_impl.cpp            # API 实现
+│   ├── lib.rs                  # version.dll 代理入口（DllMain + naked asm）
+│   ├── loader.rs               # mod 扫描加载
+│   ├── api_impl.rs             # API 实现（retour hook、内存、IPC）
 │   └── version.def             # 导出定义
-├── thirdparty/minhook/
 ├── docs/
 │   ├── mod-development_cn.md   # 开发指南
 │   └── api-reference_cn.md     # API 参考
-├── CMakeLists.txt
-└── CMakePresets.json
+├── Cargo.toml
+└── build.rs
 ```
 
+## License
+
+MIT

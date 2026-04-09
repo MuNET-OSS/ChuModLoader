@@ -4,13 +4,16 @@ Mod loading framework for CHUNITHM. Proxies `version.dll` to load mod DLLs from 
 
 > **[中文说明](README_cn.md)**
 
+> **v2.0.0** — Rewritten from C++ to Rust. The mod C ABI is fully backward-compatible; existing mod DLLs work without any changes. The legacy C++ codebase is preserved at tag [`v1.0.0-cpp`](https://github.com/Applesaber/ChuModLoader/tree/v1.0.0-cpp).
+
 ## Features
 
 - `version.dll` proxy, forwards all 17 exports to the real system DLL
 - Auto-scans `mods/*.dll` on startup, no config needed
 - Optional Mod API (`chumod_init`) with memory read/write, AOB scan, inline hook, inter-mod IPC; plain DLLs work too
 - `mods.ini` to disable individual mods
-- Built-in MinHook
+- Inline hooking via [retour](https://crates.io/crates/retour)
+- Written in Rust, mods can be written in Rust, C/C++, or any language that produces a Win32 DLL
 
 ## Installation
 
@@ -36,7 +39,48 @@ Mods not listed (or set to `1`) are loaded by default.
 
 See [Mod Development Guide](docs/mod-development.md) and [API Reference](docs/api-reference.md).
 
-### Quick Start
+### Quick Start (Rust)
+
+```rust
+use std::ffi::{c_char, c_void};
+
+#[repr(C)]
+pub struct ChuModInfo {
+    pub api_version: u32,
+    pub loader_version: *const c_char,
+    pub game_module: *const c_char,
+    pub game_base: usize,
+    pub game_size: u32,
+    pub text_base: usize,
+    pub text_size: u32,
+}
+
+#[repr(C)]
+pub struct ChuModAPI {
+    pub struct_size: u32,
+    pub log: Option<unsafe extern "C" fn(*const c_char, ...)>,
+    // ... other fields
+}
+
+#[no_mangle]
+pub extern "C" fn chumod_name() -> *const c_char {
+    b"My Rust Mod\0".as_ptr() as *const c_char
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn chumod_init(
+    info: *const ChuModInfo,
+    _api: *const ChuModAPI,
+) -> i32 {
+    // your init code
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn chumod_shutdown() {}
+```
+
+### Quick Start (C/C++)
 
 ```c
 #include "chumod.h"
@@ -56,16 +100,16 @@ All exports are optional. Plain DLL with `DllMain` only also works.
 
 ## Building
 
-Requires CMake 3.15+ and MSVC (Win32/x86):
+Requires Rust toolchain with `i686-pc-windows-msvc` target:
 
 ```bash
-cmake -B build -A Win32
-cmake --build build --config Release
+rustup toolchain install nightly --target i686-pc-windows-msvc
+cargo +nightly build --release
 ```
 
-Or open the folder in Visual Studio (`CMakePresets.json` included).
+Output: `target/i686-pc-windows-msvc/release/version.dll`
 
-Output: `build/bin/Release/version.dll`
+> **Legacy C++ build** (no longer maintained): The loader was previously built with CMake 3.15+ and MSVC (`cmake -B build -A Win32 && cmake --build build --config Release`).
 
 ## How It Works
 
@@ -84,18 +128,17 @@ Output to `chusan_loader.log` and console if available. Format: `[HH:MM:SS.mmm] 
 
 ```
 ChuModLoader/
-├── include/chumod.h        # Mod API header
+├── include/chumod.h        # Mod API header (for C/C++ mods)
 ├── src/
-│   ├── main.cpp             # version.dll proxy entry
-│   ├── loader.cpp           # mod scanning & loading
-│   ├── api_impl.cpp         # API implementation
+│   ├── lib.rs               # version.dll proxy entry (DllMain + naked asm)
+│   ├── loader.rs            # mod scanning & loading
+│   ├── api_impl.rs          # API implementation (retour hooks, memory, IPC)
 │   └── version.def          # export definitions
-├── thirdparty/minhook/
 ├── docs/
 │   ├── mod-development.md
 │   └── api-reference.md
-├── CMakeLists.txt
-└── CMakePresets.json
+├── Cargo.toml
+└── build.rs
 ```
 
 ## License
