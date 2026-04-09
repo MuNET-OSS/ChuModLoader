@@ -21,6 +21,9 @@ windows-sys = { version = "0.59", features = [
 retour = "0.4.0-alpha.4"
 once_cell = "1"
 
+[build-dependencies]
+forward-dll = "0.1.11"
+
 [profile.release]
 lto = true
 opt-level = "s"
