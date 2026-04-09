@@ -4,7 +4,7 @@ Mod loading framework for CHUNITHM. Proxies `version.dll` to load mod DLLs from 
 
 > **[中文说明](README_cn.md)**
 
-> **v2.0.0** — Rewritten from C++ to Rust. The mod C ABI is fully backward-compatible; existing mod DLLs work without any changes. The legacy C++ codebase is preserved at tag [`v1.0.0-cpp`](https://github.com/Applesaber/ChuModLoader/tree/v1.0.0-cpp).
+> **v2.0.0** — Loader rewritten from C++ to Rust. Mod C ABI unchanged; existing mod DLLs work without modification. Legacy C++ code at tag [`v1.0.0-cpp`](https://github.com/Applesaber/ChuModLoader/tree/v1.0.0-cpp).
 
 ## Features
 
@@ -130,10 +130,9 @@ Output to `chusan_loader.log` and console if available. Format: `[HH:MM:SS.mmm] 
 ChuModLoader/
 ├── include/chumod.h        # Mod API header (for C/C++ mods)
 ├── src/
-│   ├── lib.rs               # version.dll proxy entry (DllMain + naked asm)
+│   ├── lib.rs               # version.dll proxy entry (DllMain + forward_dll)
 │   ├── loader.rs            # mod scanning & loading
-│   ├── api_impl.rs          # API implementation (retour hooks, memory, IPC)
-│   └── version.def          # export definitions
+│   └── api_impl.rs          # API implementation (retour hooks, memory, IPC)
 ├── docs/
 │   ├── mod-development.md
 │   └── api-reference.md

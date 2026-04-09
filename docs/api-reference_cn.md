@@ -101,7 +101,7 @@ api->mem_fill(call_addr, 0x90, 5);
 
 ### Hook
 
-基于 [MinHook](https://github.com/TsudaKageworker/minhook)。`hook_create` 后需要 `hook_enable` 激活。
+基于 [retour](https://crates.io/crates/retour)。`hook_create` 后需要 `hook_enable` 激活。
 
 #### `hook_create(void* target, void* detour, void** original) → int`
 

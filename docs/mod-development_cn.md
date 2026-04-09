@@ -18,18 +18,19 @@ Mod = Win32 DLL（32 位），放到 `mods/` 目录。Loader 启动时自动加�
 
 ```rust
 use std::ffi::c_void;
-use windows::Win32::Foundation::{BOOL, HMODULE, TRUE};
-use windows::Win32::System::LibraryLoader::DisableThreadLibraryCalls;
-use windows::Win32::UI::WindowsAndMessaging::{MessageBoxA, MB_OK};
+
+const DLL_PROCESS_ATTACH: u32 = 1;
+
+extern "system" {
+    fn MessageBoxA(hwnd: *mut c_void, text: *const u8, caption: *const u8, flags: u32) -> i32;
+}
 
 #[no_mangle]
-pub extern "stdcall" fn DllMain(_h: HMODULE, reason: u32, _lp: *const c_void) -> BOOL {
-    if reason == 1 { // DLL_PROCESS_ATTACH
-        unsafe {
-            MessageBoxA(None, "Mod loaded!", "Hello", MB_OK);
-        }
+pub unsafe extern "system" fn DllMain(_h: *mut c_void, reason: u32, _lp: *const c_void) -> i32 {
+    if reason == DLL_PROCESS_ATTACH {
+        MessageBoxA(std::ptr::null_mut(), b"Mod loaded!\0".as_ptr(), b"Hello\0".as_ptr(), 0);
     }
-    TRUE
+    1
 }
 ```
 
@@ -43,9 +44,6 @@ edition = "2021"
 
 [lib]
 crate-type = ["cdylib"]
-
-[dependencies]
-windows = { version = "0.52", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging"] }
 ```
 
 .cargo/config.toml：
@@ -93,18 +91,18 @@ pub struct ChuModInfo {
 pub struct ChuModAPI {
     pub struct_size: u32,
     pub log: Option<unsafe extern "C" fn(*const c_char, ...)>,
-    pub mem_read: Option<unsafe extern "C" fn(usize, *mut c_void, u32)>,
-    pub mem_write: Option<unsafe extern "C" fn(usize, *const c_void, u32)>,
-    pub mem_fill: Option<unsafe extern "C" fn(usize, u8, u32)>,
     pub aob_scan: Option<unsafe extern "C" fn(usize, u32, *const u8, *const c_char) -> usize>,
+    pub mem_read: Option<unsafe extern "C" fn(usize, *mut c_void, u32) -> i32>,
+    pub mem_write: Option<unsafe extern "C" fn(usize, *const c_void, u32) -> i32>,
+    pub mem_fill: Option<unsafe extern "C" fn(usize, u8, u32) -> i32>,
     pub hook_create: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut *mut c_void) -> i32>,
-    pub hook_remove: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
     pub hook_enable: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
     pub hook_disable: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
-    pub register_service: Option<unsafe extern "C" fn(*const c_char, *mut c_void)>,
+    pub hook_remove: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
+    pub register_service: Option<unsafe extern "C" fn(*const c_char, *mut c_void) -> i32>,
     pub get_service: Option<unsafe extern "C" fn(*const c_char) -> *mut c_void>,
-    pub subscribe: Option<unsafe extern "C" fn(*const c_char, *mut c_void)>,
-    pub publish: Option<unsafe extern "C" fn(*const c_char, *const c_void, u32)>,
+    pub publish: Option<unsafe extern "C" fn(*const c_char, *mut c_void, u32) -> i32>,
+    pub subscribe: Option<unsafe extern "C" fn(*const c_char, Option<unsafe extern "C" fn(*const c_char, *mut c_void, u32)>) -> i32>,
 }
 
 static mut G_API: Option<&'static ChuModAPI> = None;
@@ -441,9 +439,13 @@ edition = "2021"
 
 [lib]
 crate-type = ["cdylib"]
+```
 
+按需添加 `windows-sys` 依赖（如需要 Win32 API）：
+
+```toml
 [dependencies]
-windows = { version = "0.52", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
 ```
 
 .cargo/config.toml：

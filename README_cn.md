@@ -4,7 +4,7 @@ CHUNITHM 的 mod 加载框架。通过代理 `version.dll`，在游戏启动时�
 
 > **[English](README.md)**
 
-> **v2.0.0** — 从 C++ 迁移到 Rust 重写。Mod 的 C ABI 接口完全向后兼容，已有的 mod DLL 无需任何修改即可使用。旧版 C++ 代码保留在 tag [`v1.0.0-cpp`](https://github.com/Applesaber/ChuModLoader/tree/v1.0.0-cpp)。
+> **v2.0.0** — Loader 从 C++ 迁移到 Rust 重写。Mod 的 C ABI 接口不变，已有 mod DLL 无需修改。旧版 C++ 代码保留在 tag [`v1.0.0-cpp`](https://github.com/Applesaber/ChuModLoader/tree/v1.0.0-cpp)。
 
 ## 功能
 
@@ -130,10 +130,9 @@ cargo +nightly build --release
 ChuModLoader/
 ├── include/chumod.h           # Mod API 头文件（C/C++ mod 使用）
 ├── src/
-│   ├── lib.rs                  # version.dll 代理入口（DllMain + naked asm）
+│   ├── lib.rs                  # version.dll 代理入口（DllMain + forward_dll）
 │   ├── loader.rs               # mod 扫描加载
-│   ├── api_impl.rs             # API 实现（retour hook、内存、IPC）
-│   └── version.def             # 导出定义
+│   └── api_impl.rs             # API 实现（retour hook、内存、IPC）
 ├── docs/
 │   ├── mod-development_cn.md   # 开发指南
 │   └── api-reference_cn.md     # API 参考
