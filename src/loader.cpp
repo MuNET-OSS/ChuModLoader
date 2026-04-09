@@ -1,4 +1,5 @@
 #include "loader.h"
+#include "api_impl.h"
 #include "../include/chumod.h"
 
 #include <Windows.h>
@@ -138,6 +139,26 @@ void load_mods() {
     join_path(pattern, MAX_PATH, mods_dir, "*.dll");
 
     write_log("loader start: base=%s", g_base_dir);
+    api::init();
+
+    DWORD attrs = GetFileAttributesA(mods_dir);
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        CreateDirectoryA(mods_dir, nullptr);
+        write_log("created mods dir: %s", mods_dir);
+    }
+
+    attrs = GetFileAttributesA(ini_path);
+    if (attrs == INVALID_FILE_ATTRIBUTES) {
+        HANDLE hf = CreateFileA(ini_path, GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hf != INVALID_HANDLE_VALUE) {
+            const char ini_default[] = "[mods]\r\n; mod_name.dll=0\r\n";
+            DWORD written;
+            WriteFile(hf, ini_default, static_cast<DWORD>(sizeof(ini_default) - 1), &written, nullptr);
+            CloseHandle(hf);
+            write_log("created default mods.ini");
+        }
+    }
+
     write_log("scan mods dir: %s", mods_dir);
     write_log("config file: %s", ini_path);
 
@@ -187,8 +208,8 @@ void load_mods() {
         auto init_fn = reinterpret_cast<ChuModInitFunc>(GetProcAddress(mod_handle, CHUMOD_INIT_NAME));
         if (init_fn) {
             ChuModInfo info = {};
-            info.api_version = 1;
-            info.loader_version = "0.1";
+            info.api_version = CHUMOD_API_VERSION;
+            info.loader_version = "1.0.0";
             HMODULE game = GetModuleHandleA("chusanApp.exe");
             if (game) {
                 info.game_module = "chusanApp.exe";
@@ -196,8 +217,18 @@ void load_mods() {
                 auto dos = reinterpret_cast<PIMAGE_DOS_HEADER>(game);
                 auto nt = reinterpret_cast<PIMAGE_NT_HEADERS>(info.game_base + dos->e_lfanew);
                 info.game_size = nt->OptionalHeader.SizeOfImage;
+                auto sec = IMAGE_FIRST_SECTION(nt);
+                for (WORD i = 0; i < nt->FileHeader.NumberOfSections; i++, sec++) {
+                    if (memcmp(sec->Name, ".text", 5) == 0) {
+                        info.text_base = info.game_base + sec->VirtualAddress;
+                        info.text_size = sec->Misc.VirtualSize;
+                        break;
+                    }
+                }
             }
-            int ret = init_fn(&info, write_log);
+            ChuModAPI* mod_api = api::get_api();
+            mod_api->log = write_log;
+            int ret = init_fn(&info, mod_api);
             if (ret != 0) {
                 write_log("mod init failed (ret=%d): %s", ret, mod.name);
                 FreeLibrary(mod_handle);
@@ -219,9 +250,9 @@ void unload_mods() {
         if (it->shutdown) it->shutdown();
         if (it->handle) FreeLibrary(it->handle);
     }
-
     g_loaded_mods.clear();
     g_loaded = false;
+    api::shutdown();
     write_log("loader shutdown");
     if (g_log_fp) { fclose(g_log_fp); g_log_fp = nullptr; }
 }

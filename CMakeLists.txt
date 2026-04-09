@@ -7,10 +7,17 @@ set(CMAKE_SHARED_LIBRARY_PREFIX "")
 add_library(ChuModLoader SHARED
     src/main.cpp
     src/loader.cpp
+    src/api_impl.cpp
     src/version.def
 )
 
-target_include_directories(ChuModLoader PRIVATE include)
+target_include_directories(ChuModLoader PRIVATE
+    include
+    thirdparty/minhook/include
+)
+
+add_subdirectory(thirdparty/minhook)
+target_link_libraries(ChuModLoader PRIVATE minhook)
 
 set_target_properties(ChuModLoader PROPERTIES
     OUTPUT_NAME "version"

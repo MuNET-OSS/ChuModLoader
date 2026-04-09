@@ -1,0 +1,225 @@
+# Mod Development Guide
+
+## Overview
+
+Mod = Win32 DLL (32-bit), placed in `mods/`. Loader picks them up on startup.
+
+Two approaches:
+
+1. **Plain DLL** — `DllMain` only.
+2. **ChuMod API** — export `chumod_init` etc. to get game info and tool API.
+
+Can be mixed.
+
+## Minimal Example (Plain DLL)
+
+```c
+#include <Windows.h>
+
+BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_ATTACH) {
+        MessageBoxA(NULL, "Mod loaded!", "Hello", MB_OK);
+    }
+    return TRUE;
+}
+```
+
+Drop the compiled DLL into `mods/`.
+
+## ChuMod API Example
+
+```c
+#include "chumod.h"
+
+static const ChuModAPI* g_api = NULL;
+
+CHUMOD_API const char* chumod_name() { return "Example Mod"; }
+
+CHUMOD_API int chumod_init(const ChuModInfo* info, const ChuModAPI* api) {
+    g_api = api;
+    api->log("game: %s @ 0x%08X (size 0x%X)",
+             info->game_module, info->game_base, info->game_size);
+    api->log(".text @ 0x%08X (size 0x%X)", info->text_base, info->text_size);
+    return 0;
+}
+
+CHUMOD_API void chumod_shutdown() {
+    if (g_api) g_api->log("bye");
+}
+```
+
+### Lifecycle
+
+```
+LoadLibrary(mod.dll)
+  → DllMain(DLL_PROCESS_ATTACH)
+  → chumod_name()        [optional, for log display]
+  → chumod_init(info, api)  [optional, return 0 = success]
+       ↓
+   (game runs)
+       ↓
+  → chumod_shutdown()    [optional, cleanup]
+  → DllMain(DLL_PROCESS_DETACH)
+  → FreeLibrary
+```
+
+If `chumod_init` returns non-zero, the loader unloads the mod immediately.
+
+## Using the API
+
+The `ChuModAPI*` from `chumod_init` is the tool function table. Store it globally.
+
+### Pattern Scanning
+
+```c
+const uint8_t sig[] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC };
+uintptr_t addr = g_api->aob_scan(info->text_base, info->text_size, sig, "xxxxx");
+if (addr) {
+    g_api->log("found at 0x%08X", addr);
+}
+```
+
+### Memory Read/Write
+
+```c
+uint32_t value;
+g_api->mem_read(0x12345678, &value, sizeof(value));
+
+uint8_t nop = 0x90;
+g_api->mem_write(0x12345678, &nop, 1);
+
+g_api->mem_fill(0x12345678, 0x90, 5);  // NOP 5 bytes
+```
+
+Page protection handled automatically.
+
+### Hooking
+
+```c
+typedef int (__stdcall *OrigFunc_t)(int a, int b);
+static OrigFunc_t orig = NULL;
+
+int __stdcall my_hook(int a, int b) {
+    g_api->log("called with %d, %d", a, b);
+    return orig(a, b);
+}
+
+// in chumod_init:
+g_api->hook_create((void*)target_addr, (void*)my_hook, (void**)&orig);
+g_api->hook_enable((void*)target_addr);
+
+// to remove later:
+g_api->hook_disable((void*)target_addr);
+g_api->hook_remove((void*)target_addr);
+```
+
+### Inter-Mod Communication
+
+**Services** — named pointer registry:
+
+```c
+// Mod A: register
+struct MyService { int version; void (*do_thing)(void); };
+static struct MyService svc = { 1, my_func };
+g_api->register_service("my_service", &svc);
+
+// Mod B: consume
+struct MyService* s = (struct MyService*)g_api->get_service("my_service");
+if (s) s->do_thing();
+```
+
+**Messages** — publish/subscribe:
+
+```c
+// subscriber
+void on_score(const char* topic, void* data, uint32_t size) {
+    int score = *(int*)data;
+}
+g_api->subscribe("score_update", on_score);
+
+// publisher
+int score = 1010000;
+g_api->publish("score_update", &score, sizeof(score));
+```
+
+## Dual Mode (Loader + inject -k)
+
+Compatible with both loader and `inject -k` injection:
+
+```c
+#include "chumod.h"
+
+static int my_init(const ChuModInfo* info, const ChuModAPI* api) {
+    // your init code
+    return 0;
+}
+
+CHUMOD_DUAL_MODE(my_init)
+
+BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
+    if (reason == DLL_PROCESS_ATTACH) {
+        DisableThreadLibraryCalls(h);
+        CHUMOD_DUAL_MODE_START();
+    }
+    return TRUE;
+}
+```
+
+When loaded by the loader, `chumod_init` runs normally. Via `inject -k`, a fallback thread waits 3s then calls init with minimal `ChuModInfo`.
+
+> In standalone mode all `ChuModAPI` function pointers are NULL. Check before calling.
+
+## Dependencies
+
+Declare dependencies, loader ensures load order:
+
+```c
+CHUMOD_API const char* chumod_depends() {
+    return "base_mod,utility_mod";
+}
+```
+
+The loader will ensure those mods are loaded before yours.
+
+> Dependencies are matched by filename or `chumod_name()` return value.
+
+## Build Setup
+
+Include `chumod.h` from ChuModLoader — copy it or add to include path. CMakeLists.txt example:
+
+```cmake
+cmake_minimum_required(VERSION 3.15)
+project(my_mod LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+
+add_library(my_mod SHARED src/main.cpp)
+target_include_directories(my_mod PRIVATE path/to/ChuModLoader/include)
+
+set_target_properties(my_mod PROPERTIES
+    OUTPUT_NAME "my_mod"
+    SUFFIX ".dll"
+)
+```
+
+Build with `-A Win32` (game is 32-bit):
+
+```bash
+cmake -B build -A Win32
+cmake --build build --config Release
+```
+
+Copy output DLL to `mods/`.
+
+## Tips
+
+- Must use `-A Win32`, game is 32-bit
+- Don't block `DllMain`, heavy work goes in `chumod_init` or a new thread
+- Use AOB scan over hardcoded addresses — they change on game updates
+- Clean up all hooks and resources in `chumod_shutdown`
+- API pointers may be NULL in dual mode
+
+## See Also
+
+- [API Reference](api-reference.md)
+- [chumod.h](../include/chumod.h)

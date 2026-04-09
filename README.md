@@ -1,85 +1,102 @@
 # ChuModLoader
 
-CHUNITHM mod 加载框架。通过 `version.dll` 代理劫持，自动加载 `mods/` 目录下的所有 mod DLL。
+Mod loading framework for CHUNITHM. Proxies `version.dll` to load mod DLLs from `mods/` at runtime.
 
-## 安装
+> **[中文说明](README_cn.md)**
 
-1. 将 `version.dll` 放到游戏目录（`chusanApp.exe` 同级）
-2. 在游戏目录创建 `mods/` 文件夹
-3. 将 mod DLL 放入 `mods/`
-4. 正常启动游戏
+## Features
 
-## 禁用指定 mod
+- `version.dll` proxy, forwards all 17 exports to the real system DLL
+- Auto-scans `mods/*.dll` on startup, no config needed
+- Optional Mod API (`chumod_init`) with memory read/write, AOB scan, inline hook, inter-mod IPC; plain DLLs work too
+- `mods.ini` to disable individual mods
+- Built-in MinHook
 
-在游戏目录创建 `mods.ini`：
+## Installation
+
+1. Build or download `version.dll`
+2. Place it in the game directory (next to `chusanApp.exe`)
+3. Drop mod DLLs into `mods/`
+4. Launch the game normally
+
+`mods/` directory and `mods.ini` are created automatically on first run.
+
+## Configuration
+
+`mods.ini` is auto-generated in the game directory. To disable a mod:
 
 ```ini
 [mods]
-某个mod.dll=0
+mod_name.dll=0
 ```
 
-## Mod API
+Mods not listed (or set to `1`) are loaded by default.
 
-Mod 可以选择实现 `chumod.h` 中定义的接口，获得生命周期管理和日志能力。**不实现也能加载**——普通 DLL 照常工作。
+## For Mod Developers
+
+See [Mod Development Guide](docs/mod-development.md) and [API Reference](docs/api-reference.md).
+
+### Quick Start
 
 ```c
 #include "chumod.h"
 
-CHUMOD_API const char* chumod_name() {
-    return "My Mod";
+CHUMOD_API const char* chumod_name() { return "My Mod"; }
+
+CHUMOD_API int chumod_init(const ChuModInfo* info, const ChuModAPI* api) {
+    api->log("game base = 0x%08X, .text = 0x%08X +0x%X",
+             info->game_base, info->text_base, info->text_size);
+    return 0;
 }
 
-CHUMOD_API int chumod_init(const ChuModInfo* info, ChuModLogFunc log) {
-    log("hello from my mod! game base=0x%08X", info->game_base);
-    return 0; // 0=成功
-}
-
-CHUMOD_API void chumod_shutdown() {
-    // 清理
-}
+CHUMOD_API void chumod_shutdown() { }
 ```
 
-### API 函数（均为可选）
+All exports are optional. Plain DLL with `DllMain` only also works.
 
-| 导出函数 | 签名 | 说明 |
-|----------|------|------|
-| `chumod_name` | `const char*()` | 返回 mod 名称 |
-| `chumod_init` | `int(ChuModInfo*, ChuModLogFunc)` | 初始化，返回 0 表示成功 |
-| `chumod_shutdown` | `void()` | 游戏退出时清理资源 |
+## Building
 
-### ChuModInfo
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `api_version` | `uint32_t` | API 版本（当前为 1） |
-| `loader_version` | `const char*` | Loader 版本号 |
-| `game_module` | `const char*` | 游戏模块名 |
-| `game_base` | `uintptr_t` | 游戏模块基址 |
-| `game_size` | `uint32_t` | 游戏模块大小 |
-
-## 构建
-
-需要 CMake + MSVC（Win32/x86）：
+Requires CMake 3.15+ and MSVC (Win32/x86):
 
 ```bash
 cmake -B build -A Win32
 cmake --build build --config Release
 ```
 
-产物在 `build/bin/Release/version.dll`。
+Or open the folder in Visual Studio (`CMakePresets.json` included).
 
-## 原理
+Output: `build/bin/Release/version.dll`
 
-`version.dll` 是 Windows 系统 DLL，几乎所有程序启动时都会加载。Windows 优先从程序目录搜索，因此放在游戏目录的 `version.dll` 会被优先加载。
+## How It Works
 
-Loader 在 `DllMain` 中：
-1. 从 `System32` 加载真实的 `version.dll`，转发所有 17 个导出函数
-2. 启动后台线程，等待游戏初始化完成后扫描 `mods/` 目录
-3. 依次 `LoadLibrary` 每个 mod DLL，调用 Mod API 接口
+Exploits Windows DLL search order (application directory before System32):
 
-## 日志
+1. Loads the real `version.dll` from System32, forwards exports via naked JMP
+2. Background thread waits 2s, scans `mods/*.dll`, calls `LoadLibrary` on each
+3. Parses PE headers for `.text` section info, calls `chumod_init` on API-exporting mods
+4. On exit, calls `chumod_shutdown` in reverse order, then `FreeLibrary`
 
-运行时日志输出到游戏目录的 `chusan_loader.log`，同时输出到控制台（如果有）。
+## Logging
+
+Output to `chusan_loader.log` and console if available. Format: `[HH:MM:SS.mmm] [loader] message`
+
+## Project Structure
+
+```
+ChuModLoader/
+├── include/chumod.h        # Mod API header
+├── src/
+│   ├── main.cpp             # version.dll proxy entry
+│   ├── loader.cpp           # mod scanning & loading
+│   ├── api_impl.cpp         # API implementation
+│   └── version.def          # export definitions
+├── thirdparty/minhook/
+├── docs/
+│   ├── mod-development.md
+│   └── api-reference.md
+├── CMakeLists.txt
+└── CMakePresets.json
+```
 
 ## License
 
