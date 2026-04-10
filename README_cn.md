@@ -4,7 +4,7 @@ CHUNITHM 的 mod 加载框架。通过代理 `version.dll`，在游戏启动时�
 
 > **[English](README.md)**
 
-> **v2.0.0** — Loader 从 C++ 迁移到 Rust 重写。Mod 的 C ABI 接口不变，已有 mod DLL 无需修改。旧版 C++ 代码保留在 tag [`v1.0.0-cpp`](https://github.com/Applesaber/ChuModLoader/tree/v1.0.0-cpp)。
+> **v2.0.0** — Loader 从 C++ 迁移到 Rust 重写。Mod 的 C ABI 接口不变，已有 mod DLL 无需修改。C++ mod 开发仍然完整支持 — `chumod.h` 头文件随 Rust 代码同步维护，持续更新。旧版 C++ 代码保留在 tag [`v1.0.0-cpp`](https://github.com/Applesaber/ChuModLoader/tree/v1.0.0-cpp)。
 
 ## 功能
 
@@ -34,6 +34,29 @@ mod_name.dll=0
 ```
 
 未列出（或设为 `1`）的 mod 默认加载。
+
+### Mod 独立配置 (v2)
+
+每个 mod 在 `mods/config/<mod名>.ini` 有独立配置文件，首次访问时自动创建。通过 Config API 读写：
+
+```c
+// 读取，不存在时返回默认值（文件自动创建）
+int fov = api->config_get_int("fov", 75);
+float bloom = api->config_get_float("bloom_intensity", 1.0f);
+int unlock = api->config_get_bool("unlock_fps", 0);
+
+// 写入（立即持久化到 INI）
+api->config_set_int("fov", 90);
+api->config_set_bool("unlock_fps", 1);
+```
+
+```ini
+; mods/config/my_mod.ini
+[config]
+fov=90
+bloom_intensity=1.0
+unlock_fps=true
+```
 
 ## Mod 开发
 
@@ -109,7 +132,7 @@ cargo +nightly build --release
 
 输出：`target/i686-pc-windows-msvc/release/version.dll`
 
-> **旧版 C++ 构建**（不再维护）：之前使用 CMake 3.15+ 和 MSVC 构建（`cmake -B build -A Win32 && cmake --build build --config Release`）。
+> **C++ 构建**：之前使用 CMake 3.15+ 和 MSVC 构建（`cmake -B build -A Win32 && cmake --build build --config Release`）。
 
 ## 工作原理
 

@@ -54,7 +54,7 @@ const GENERIC_WRITE: u32 = 0x40000000;
 const CREATE_NEW: u32 = 1;
 const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
 const MAX_PATH: usize = 260;
-const CHUMOD_API_VERSION: u32 = 1;
+const CHUMOD_API_VERSION: u32 = 2;
 
 #[repr(C)]
 pub struct ChuModInfo {
@@ -65,6 +65,8 @@ pub struct ChuModInfo {
     pub game_size: u32,
     pub text_base: usize,
     pub text_size: u32,
+    pub rdata_base: usize,
+    pub rdata_size: u32,
 }
 
 #[repr(C)]
@@ -89,6 +91,16 @@ pub struct ChuModAPI {
             Option<unsafe extern "C" fn(*const c_char, *mut c_void, u32)>,
         ) -> i32,
     >,
+    pub rtti_find_vtable: Option<unsafe extern "C" fn(*const c_char) -> usize>,
+    pub config_get_int: Option<unsafe extern "C" fn(*const c_char, i32) -> i32>,
+    pub config_get_float: Option<unsafe extern "C" fn(*const c_char, f32) -> f32>,
+    pub config_get_bool: Option<unsafe extern "C" fn(*const c_char, i32) -> i32>,
+    pub config_get_string:
+        Option<unsafe extern "C" fn(*const c_char, *mut c_char, u32, *const c_char) -> i32>,
+    pub config_set_int: Option<unsafe extern "C" fn(*const c_char, i32) -> i32>,
+    pub config_set_float: Option<unsafe extern "C" fn(*const c_char, f32) -> i32>,
+    pub config_set_bool: Option<unsafe extern "C" fn(*const c_char, i32) -> i32>,
+    pub config_set_string: Option<unsafe extern "C" fn(*const c_char, *const c_char) -> i32>,
 }
 
 type ChuModInitFunc = unsafe extern "C" fn(*const ChuModInfo, *const ChuModAPI) -> i32;
@@ -196,7 +208,11 @@ pub unsafe extern "C" fn write_log_variadic(fmt: *const c_char, args: ...) {
         fmt,
         &args as *const _ as *const c_void,
     );
-    let len = if len < 0 { 0 } else { len.min(buf.len() as i32 - 1) } as usize;
+    let len = if len < 0 {
+        0
+    } else {
+        len.min(buf.len() as i32 - 1)
+    } as usize;
     let text = String::from_utf8_lossy(&buf[..len]);
     if let Ok(mut state) = STATE.lock() {
         write_log_inner(&mut state, &text);
@@ -206,8 +222,12 @@ pub unsafe extern "C" fn write_log_variadic(fmt: *const c_char, args: ...) {
 fn is_mod_enabled(ini_path: &str, mod_name: &str) -> bool {
     extern "system" {
         fn GetPrivateProfileStringA(
-            app: *const u8, key: *const u8, default: *const u8,
-            ret: *mut u8, size: u32, file: *const u8,
+            app: *const u8,
+            key: *const u8,
+            default: *const u8,
+            ret: *mut u8,
+            size: u32,
+            file: *const u8,
         ) -> u32;
     }
     unsafe {
@@ -274,7 +294,7 @@ struct ImageSectionHeader {
     _characteristics: u32,
 }
 
-fn parse_game_info(game: HMODULE) -> (u32, usize, u32) {
+fn parse_game_info(game: HMODULE) -> (u32, usize, u32, usize, u32) {
     unsafe {
         let base = game as usize;
         let dos = &*(base as *const ImageDosHeader);
@@ -289,6 +309,8 @@ fn parse_game_info(game: HMODULE) -> (u32, usize, u32) {
         let num_sections = nt.file_header.number_of_sections;
         let mut text_base = 0usize;
         let mut text_size = 0u32;
+        let mut rdata_base = 0usize;
+        let mut rdata_size = 0u32;
 
         for i in 0..num_sections as usize {
             let sec = &*((first_section + i * std::mem::size_of::<ImageSectionHeader>())
@@ -296,11 +318,14 @@ fn parse_game_info(game: HMODULE) -> (u32, usize, u32) {
             if &sec.name[..5] == b".text" {
                 text_base = base + sec.virtual_address as usize;
                 text_size = sec.virtual_size;
-                break;
+            }
+            if &sec.name[..6] == b".rdata" {
+                rdata_base = base + sec.virtual_address as usize;
+                rdata_size = sec.virtual_size;
             }
         }
 
-        (game_size, text_base, text_size)
+        (game_size, text_base, text_size, rdata_base, rdata_size)
     }
 }
 
@@ -334,6 +359,24 @@ pub unsafe fn load_mods() {
     drop(state);
 
     api_impl::init();
+
+    let game = GetModuleHandleA(b"chusanApp.exe\0".as_ptr());
+    let (
+        game_size_cached,
+        text_base_cached,
+        text_size_cached,
+        rdata_base_cached,
+        rdata_size_cached,
+    ) = if !game.is_null() {
+        parse_game_info(game)
+    } else {
+        (0u32, 0usize, 0u32, 0usize, 0u32)
+    };
+    api_impl::set_rtti_info(
+        rdata_base_cached,
+        rdata_size_cached as usize,
+        text_base_cached,
+    );
 
     let mods_dir_c = format!("{}\0", mods_dir);
     let attrs = GetFileAttributesA(mods_dir_c.as_ptr());
@@ -441,32 +484,38 @@ pub unsafe fn load_mods() {
         if let Some(init_fn) = init_fn_ptr {
             let init_fn: ChuModInitFunc = std::mem::transmute(init_fn);
 
-            let game = GetModuleHandleA(b"chusanApp.exe\0".as_ptr());
-            let (mut game_size, mut text_base, mut text_size) = (0u32, 0usize, 0u32);
-            let game_module_str: *const c_char;
-            if !game.is_null() {
-                let parsed = parse_game_info(game);
-                game_size = parsed.0;
-                text_base = parsed.1;
-                text_size = parsed.2;
-                game_module_str = b"chusanApp.exe\0".as_ptr() as *const c_char;
+            let game_module_str: *const c_char = if !game.is_null() {
+                b"chusanApp.exe\0".as_ptr() as *const c_char
             } else {
-                game_module_str = std::ptr::null();
-            }
+                std::ptr::null()
+            };
 
-            let loader_ver = b"1.0.0\0".as_ptr() as *const c_char;
+            let loader_ver = b"2.0.0\0".as_ptr() as *const c_char;
             let info = ChuModInfo {
                 api_version: CHUMOD_API_VERSION,
                 loader_version: loader_ver,
                 game_module: game_module_str,
                 game_base: if !game.is_null() { game as usize } else { 0 },
-                game_size,
-                text_base,
-                text_size,
+                game_size: game_size_cached,
+                text_base: text_base_cached,
+                text_size: text_size_cached,
+                rdata_base: rdata_base_cached,
+                rdata_size: rdata_size_cached,
             };
 
             let api = api_impl::get_api();
             (*api).log = Some(write_log_variadic);
+
+            let config_dir = format!("{}\\mods\\config", base_dir);
+            let config_dir_c = format!("{}\0", config_dir);
+            CreateDirectoryA(config_dir_c.as_ptr(), std::ptr::null());
+
+            let mod_stem = mod_name
+                .strip_suffix(".dll")
+                .or_else(|| mod_name.strip_suffix(".DLL"))
+                .unwrap_or(&mod_name);
+            let config_path = format!("{}\\{}.ini", config_dir, mod_stem);
+            api_impl::set_current_config(&config_path);
 
             let ret = init_fn(&info, api);
             if ret != 0 {

@@ -10,7 +10,7 @@ extern "C" {
 #include <Windows.h>
 
 #define CHUMOD_API __declspec(dllexport)
-#define CHUMOD_API_VERSION 1
+#define CHUMOD_API_VERSION 2
 
 // --- 基础信息 ---
 
@@ -22,6 +22,8 @@ typedef struct {
     uint32_t game_size;
     uintptr_t text_base;
     uint32_t text_size;
+    uintptr_t rdata_base;
+    uint32_t rdata_size;
 } ChuModInfo;
 
 // --- 日志 ---
@@ -58,6 +60,24 @@ typedef void (*ChuModMessageCallback)(const char* topic, void* data, uint32_t si
 typedef int (*ChuModPublishFunc)(const char* topic, void* data, uint32_t size);
 typedef int (*ChuModSubscribeFunc)(const char* topic, ChuModMessageCallback callback);
 
+// --- RTTI (v2) ---
+
+typedef uintptr_t (*ChuModRttiFindVtableFunc)(const char* rtti_class_name);
+
+// --- Config (v2, per-mod INI in mods/config/) ---
+
+// key 在 [config] section 下读写，返回值或默认值
+typedef int   (*ChuModConfigGetIntFunc)(const char* key, int default_val);
+typedef float (*ChuModConfigGetFloatFunc)(const char* key, float default_val);
+typedef int   (*ChuModConfigGetBoolFunc)(const char* key, int default_val);
+// 写入 buf，返回实际长度
+typedef int   (*ChuModConfigGetStringFunc)(const char* key, char* buf, uint32_t buf_size, const char* default_val);
+// 返回 0 成功
+typedef int   (*ChuModConfigSetIntFunc)(const char* key, int value);
+typedef int   (*ChuModConfigSetFloatFunc)(const char* key, float value);
+typedef int   (*ChuModConfigSetBoolFunc)(const char* key, int value);
+typedef int   (*ChuModConfigSetStringFunc)(const char* key, const char* value);
+
 // --- API 函数表 (loader -> mod) ---
 
 typedef struct {
@@ -79,6 +99,18 @@ typedef struct {
     ChuModGetServiceFunc get_service;
     ChuModPublishFunc publish;
     ChuModSubscribeFunc subscribe;
+
+    // v2
+    ChuModRttiFindVtableFunc rtti_find_vtable;
+
+    ChuModConfigGetIntFunc config_get_int;
+    ChuModConfigGetFloatFunc config_get_float;
+    ChuModConfigGetBoolFunc config_get_bool;
+    ChuModConfigGetStringFunc config_get_string;
+    ChuModConfigSetIntFunc config_set_int;
+    ChuModConfigSetFloatFunc config_set_float;
+    ChuModConfigSetBoolFunc config_set_bool;
+    ChuModConfigSetStringFunc config_set_string;
 } ChuModAPI;
 
 // --- Mod 导出函数 ---

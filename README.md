@@ -4,7 +4,7 @@ Mod loading framework for CHUNITHM. Proxies `version.dll` to load mod DLLs from 
 
 > **[中文说明](README_cn.md)**
 
-> **v2.0.0** — Loader rewritten from C++ to Rust. Mod C ABI unchanged; existing mod DLLs work without modification. Legacy C++ code at tag [`v1.0.0-cpp`](https://github.com/Applesaber/ChuModLoader/tree/v1.0.0-cpp).
+> **v2.0.0** — Loader rewritten from C++ to Rust. Mod C ABI unchanged; existing mod DLLs work without modification. C++ mods remain fully supported via `chumod.h` — the header is maintained alongside the Rust codebase and will continue to receive updates. Legacy C++ loader code at tag [`v1.0.0-cpp`](https://github.com/Applesaber/ChuModLoader/tree/v1.0.0-cpp).
 
 ## Features
 
@@ -34,6 +34,29 @@ mod_name.dll=0
 ```
 
 Mods not listed (or set to `1`) are loaded by default.
+
+### Per-Mod Configuration (v2)
+
+Each mod gets its own config file at `mods/config/<mod_name>.ini`, created automatically on first access. Mods read/write settings via the Config API:
+
+```c
+// read with defaults (file created automatically if missing)
+int fov = api->config_get_int("fov", 75);
+float bloom = api->config_get_float("bloom_intensity", 1.0f);
+int unlock = api->config_get_bool("unlock_fps", 0);
+
+// write (persisted to INI immediately)
+api->config_set_int("fov", 90);
+api->config_set_bool("unlock_fps", 1);
+```
+
+```ini
+; mods/config/my_mod.ini
+[config]
+fov=90
+bloom_intensity=1.0
+unlock_fps=true
+```
 
 ## For Mod Developers
 
@@ -109,7 +132,7 @@ cargo +nightly build --release
 
 Output: `target/i686-pc-windows-msvc/release/version.dll`
 
-> **Legacy C++ build** (no longer maintained): The loader was previously built with CMake 3.15+ and MSVC (`cmake -B build -A Win32 && cmake --build build --config Release`).
+> **C++ build**: The loader was previously built with CMake 3.15+ and MSVC (`cmake -B build -A Win32 && cmake --build build --config Release`).
 
 ## How It Works
 
