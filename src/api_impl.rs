@@ -444,7 +444,7 @@ unsafe extern "C" fn api_config_get_bool(key: *const c_char, default: i32) -> i3
         let key_c = format!("{}\0", key_str.to_string_lossy());
         let file_c = format!("{}\0", path);
         let mut buf = [0u8; 32];
-        let default_str = if default != 0 { b"true\0" } else { b"false\0" };
+        let default_str: &[u8] = if default != 0 { b"true\0" } else { b"false\0" };
         let len = GetPrivateProfileStringA(
             section.as_ptr(),
             key_c.as_ptr(),
@@ -542,7 +542,7 @@ unsafe extern "C" fn api_config_set_bool(key: *const c_char, value: i32) -> i32 
     with_config_path(|path| {
         let section = b"config\0";
         let key_c = format!("{}\0", key_str.to_string_lossy());
-        let val_c = if value != 0 { b"true\0" } else { b"false\0" };
+        let val_c: &[u8] = if value != 0 { b"true\0" } else { b"false\0" };
         let file_c = format!("{}\0", path);
         WritePrivateProfileStringA(
             section.as_ptr(),
