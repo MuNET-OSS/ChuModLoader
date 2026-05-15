@@ -35,6 +35,9 @@ static mut G_API: ChuModAPI = ChuModAPI {
     config_set_float: None,
     config_set_bool: None,
     config_set_string: None,
+    log_info: None,
+    log_warn: None,
+    log_error: None,
 };
 
 fn make_api() -> ChuModAPI {
@@ -62,6 +65,9 @@ fn make_api() -> ChuModAPI {
         config_set_float: Some(config_ini::api_config_set_float),
         config_set_bool: Some(config_ini::api_config_set_bool),
         config_set_string: Some(config_ini::api_config_set_string),
+        log_info: Some(log_api::api_log_info),
+        log_warn: Some(log_api::api_log_warn),
+        log_error: Some(log_api::api_log_error),
     }
 }
 

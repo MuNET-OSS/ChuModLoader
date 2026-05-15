@@ -2,7 +2,7 @@ use std::ffi::{c_char, c_void};
 use std::io::Write;
 
 use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
-use windows_sys::Win32::System::Console::WriteConsoleA;
+use windows_sys::Win32::System::Console::{GetConsoleScreenBufferInfo, SetConsoleTextAttribute, WriteConsoleA, CONSOLE_SCREEN_BUFFER_INFO};
 
 use super::state::{LoaderState, STATE};
 
@@ -22,14 +22,48 @@ struct SYSTEMTIME {
     w_milliseconds: u16,
 }
 
+#[derive(Clone, Copy)]
+pub enum LogLevel {
+    Info,
+    Warn,
+    Error,
+}
+
+impl LogLevel {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Info => "INFO",
+            Self::Warn => "WARN",
+            Self::Error => "ERROR",
+        }
+    }
+
+    fn color(self) -> u16 {
+        match self {
+            Self::Info => 0x0A,
+            Self::Warn => 0x0E,
+            Self::Error => 0x0C,
+        }
+    }
+}
+
 pub fn write_log_inner(state: &mut LoaderState, msg: &str) {
+    write_log_inner_level(state, LogLevel::Info, msg);
+}
+
+pub fn write_log_inner_level(state: &mut LoaderState, level: LogLevel, msg: &str) {
     unsafe {
         let mut st: SYSTEMTIME = std::mem::zeroed();
         GetLocalTime(&mut st);
 
         let formatted = format!(
-            "[{:02}:{:02}:{:02}.{:03}] [loader] {}\n",
-            st.w_hour, st.w_minute, st.w_second, st.w_milliseconds, msg
+            "[{:02}:{:02}:{:02}.{:03}] [loader] [{}] {}\n",
+            st.w_hour,
+            st.w_minute,
+            st.w_second,
+            st.w_milliseconds,
+            level.label(),
+            msg
         );
 
         if let Some(ref mut f) = state.log_file {
@@ -39,6 +73,9 @@ pub fn write_log_inner(state: &mut LoaderState, msg: &str) {
 
         if state.console != INVALID_HANDLE_VALUE && !state.console.is_null() {
             let mut written = 0u32;
+            let mut console_info: CONSOLE_SCREEN_BUFFER_INFO = std::mem::zeroed();
+            let has_console_info = GetConsoleScreenBufferInfo(state.console, &mut console_info) != 0;
+            SetConsoleTextAttribute(state.console, level.color());
             WriteConsoleA(
                 state.console,
                 formatted.as_ptr(),
@@ -46,13 +83,28 @@ pub fn write_log_inner(state: &mut LoaderState, msg: &str) {
                 &mut written,
                 std::ptr::null(),
             );
+            if has_console_info {
+                SetConsoleTextAttribute(state.console, console_info.wAttributes);
+            }
         }
     }
 }
 
 pub fn log_info(msg: &str) {
     if let Ok(mut state) = STATE.lock() {
-        write_log_inner(&mut state, msg);
+        write_log_inner_level(&mut state, LogLevel::Info, msg);
+    }
+}
+
+pub fn log_warn(msg: &str) {
+    if let Ok(mut state) = STATE.lock() {
+        write_log_inner_level(&mut state, LogLevel::Warn, msg);
+    }
+}
+
+pub fn log_error(msg: &str) {
+    if let Ok(mut state) = STATE.lock() {
+        write_log_inner_level(&mut state, LogLevel::Error, msg);
     }
 }
 
