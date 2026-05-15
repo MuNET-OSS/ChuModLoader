@@ -1,6 +1,7 @@
 build/
 build-debug/
 .vs/
+.idea/
 *.user
 out/
 target/
