@@ -1,6 +1,6 @@
-# ChuModLoader API Reference (v2.5.0)
+# ChuModLoader API Reference (v3.0.0)
 
-This document describes the C ABI exposed by ChuModLoader v2.5.0. The ABI is intentionally append-only: older mods continue to work, and newer mods should check `ChuModAPI::struct_size` before using fields added after their target version.
+This document describes the C ABI exposed by ChuModLoader v3.0.0. The ABI is intentionally append-only: older mods continue to work, and newer mods should check `ChuModAPI::struct_size` before using fields added after their target version.
 
 For C/C++ projects, include `include/chumod.h`. Rust or other languages should mirror the same `#[repr(C)]` layouts and `extern "C"` function signatures.
 
@@ -35,8 +35,8 @@ typedef struct {
 
 | Field | Description |
 | --- | --- |
-| `api_version` | Loader ABI version. v2.5.0 reports `CHUMOD_API_VERSION` (`3`). |
-| `loader_version` | Loader package version string, e.g. `"2.5.0"`. |
+| `api_version` | Loader ABI version. v3.0.0 reports `CHUMOD_API_VERSION` (`3`). |
+| `loader_version` | Loader package version string, e.g. `"3.0.0"`. |
 | `game_module` | Game executable module name, usually `"chusanApp.exe"`; may be `NULL`. |
 | `game_base` | Base address of the game image, or `0` if the module was not found. |
 | `game_size` | Size of the game image in bytes. |
@@ -91,6 +91,9 @@ typedef struct {
     ChuModTomlGetFloatFunc toml_get_float;
     ChuModTomlGetStringFunc toml_get_string;
     ChuModGetManifestPathFunc get_manifest_path;
+
+    /* v3 */
+    ChuModReloadModFunc reload_mod;
 } ChuModAPI;
 ```
 
@@ -403,6 +406,33 @@ if (manifest) {
 }
 ```
 
+## v3 API
+
+### Hot reload
+
+```c
+typedef int (*ChuModReloadModFunc)(const char* mod_name);
+int reload_mod(const char* mod_name);
+```
+
+Reloads a currently loaded mod by display name, file name, or file stem. The loader calls the target mod's `chumod_shutdown`, unloads the DLL with `FreeLibrary`, loads it again, then calls `chumod_init` and `chumod_on_ready` if present. The whole flow is panic-guarded and logged.
+
+Parameters:
+- `mod_name`: display name, DLL file name (`example.dll`), or file stem (`example`).
+
+Return value: `0` on success, non-zero on failure.
+
+Example:
+
+```c
+if (api->reload_mod) {
+    int ret = api->reload_mod("Example Mod");
+    if (ret != 0) api->log_error("reload failed");
+}
+```
+
+External trigger: create `mods/reload.flag` to reload all currently loaded mods. The loader monitor thread deletes the flag after processing.
+
 ## Mod exports
 
 All exports are optional except that mods needing the API should export `chumod_init`. Plain DLLs with only `DllMain` are still loaded.
@@ -416,6 +446,7 @@ CHUMOD_API const char* chumod_version(void);
 CHUMOD_API const char* chumod_author(void);
 CHUMOD_API const char* chumod_min_loader_version(void);
 CHUMOD_API void chumod_on_ready(void);
+CHUMOD_API void chumod_on_frame(void);
 ```
 
 | Export | Loader behavior |
@@ -428,6 +459,7 @@ CHUMOD_API void chumod_on_ready(void);
 | `chumod_author` | Returns mod author metadata. |
 | `chumod_min_loader_version` | Returns minimum required loader version, e.g. `"2.1.0"`. |
 | `chumod_on_ready` | Called after all successful `chumod_init` calls finish. |
+| `chumod_on_frame` | Called by the loader fallback frame loop after `chumod_on_ready`; current implementation uses a 16 ms interval thread. |
 
 Example:
 

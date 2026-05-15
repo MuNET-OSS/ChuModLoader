@@ -1,4 +1,4 @@
-# ChuModLoader Mod Development Guide (v2.5.0)
+# ChuModLoader Mod Development Guide (v3.0.0)
 
 ChuModLoader is a `version.dll` proxy that loads mod DLLs from `mods/` when `chusanApp.exe` starts. Mods can be written in several ways and can opt into progressively richer APIs.
 
@@ -19,12 +19,15 @@ LoadLibrary(mod.dll)
   -> optional metadata/dependency exports are read
   -> chumod_init(info, api)
   -> after every successful mod init: chumod_on_ready()
+  -> optional repeated frame event: chumod_on_frame()
   -> game keeps running
   -> chumod_shutdown()
   -> FreeLibrary(mod.dll)
 ```
 
 Use `chumod_init` for local setup and hook creation. Use `chumod_on_ready` when you need other mods' services to exist. Use `chumod_shutdown` to disable hooks and release resources.
+
+`chumod_on_frame` is optional. v3.0.0 uses a 16 ms fallback frame loop after `chumod_on_ready` for mods that export it.
 
 ## Quick Start: Rust
 
@@ -80,6 +83,7 @@ pub struct ChuModAPI {
     pub toml_get_float: Option<unsafe extern "C" fn(*const c_char, *const c_char, f32) -> f32>,
     pub toml_get_string: usize,
     pub get_manifest_path: Option<unsafe extern "C" fn() -> *const c_char>,
+    pub reload_mod: Option<unsafe extern "C" fn(*const c_char) -> i32>,
 }
 
 static mut API: *const ChuModAPI = std::ptr::null();
@@ -176,6 +180,10 @@ CHUMOD_API void chumod_on_ready() {
     if (g_api) g_api->log_info("All mods are ready");
 }
 
+CHUMOD_API void chumod_on_frame() {
+    // called from the loader fallback frame loop
+}
+
 CHUMOD_API void chumod_shutdown() {
     if (g_api) g_api->log_info("C++ mod shutdown");
 }
@@ -267,7 +275,7 @@ The loader sorts mods before calling `chumod_init`. If dependencies cannot be sa
 
 ## Crash protection
 
-ChuModLoader wraps `chumod_init`, `chumod_on_ready`, and `chumod_shutdown` with Rust `catch_unwind`. This protects against Rust panics crossing the loader boundary. It does **not** make arbitrary memory faults safe: access violations in native code can still crash the process.
+ChuModLoader wraps `chumod_init`, `chumod_on_ready`, `chumod_on_frame`, and `chumod_shutdown` with Rust `catch_unwind`. v3.0.0 also installs a top-level SEH filter that writes minidumps and readable crash logs to `mods/crash/`. This does **not** make arbitrary memory faults safe: access violations in native code can still terminate the process after the dump is written.
 
 Guidelines:
 
@@ -321,3 +329,15 @@ CHUMOD_API const char* chumod_min_loader_version() {
 ```
 
 Also guard individual fields with `struct_size` and null checks when distributing binaries to users with unknown loader versions.
+
+## Hot reload
+
+v3.0.0 adds `api->reload_mod`. It reloads an already-loaded mod by display name, file name, or file stem.
+
+```c
+if (api->reload_mod) {
+    api->reload_mod("C++ Example");
+}
+```
+
+You can also create `mods/reload.flag` to reload all currently loaded mods. The loader removes the flag after processing.

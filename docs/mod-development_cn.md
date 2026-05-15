@@ -1,4 +1,4 @@
-# ChuModLoader Mod 开发指南（v2.5.0）
+# ChuModLoader Mod 开发指南（v3.0.0）
 
 ChuModLoader 是一个 `version.dll` 代理，会在 `chusanApp.exe` 启动时从 `mods/` 加载 Mod DLL。Mod 可以用多种方式编写，并按需接入更丰富的 API。
 
@@ -19,12 +19,15 @@ LoadLibrary(mod.dll)
   -> 读取可选 metadata/dependency 导出
   -> chumod_init(info, api)
   -> 所有成功初始化的 Mod 完成后：chumod_on_ready()
+  -> 可选重复帧事件：chumod_on_frame()
   -> 游戏运行中
   -> chumod_shutdown()
   -> FreeLibrary(mod.dll)
 ```
 
 `chumod_init` 适合本地初始化和 hook 创建。需要等待其他 Mod 服务存在时，使用 `chumod_on_ready`。`chumod_shutdown` 中应禁用 hook 并释放资源。
+
+`chumod_on_frame` 是可选导出。v3.0.0 会在 `chumod_on_ready` 之后，对导出它的 Mod 启动 16ms 间隔的兜底帧循环。
 
 ## Quick Start：Rust
 
@@ -80,6 +83,7 @@ pub struct ChuModAPI {
     pub toml_get_float: Option<unsafe extern "C" fn(*const c_char, *const c_char, f32) -> f32>,
     pub toml_get_string: usize,
     pub get_manifest_path: Option<unsafe extern "C" fn() -> *const c_char>,
+    pub reload_mod: Option<unsafe extern "C" fn(*const c_char) -> i32>,
 }
 
 static mut API: *const ChuModAPI = std::ptr::null();
@@ -176,6 +180,10 @@ CHUMOD_API void chumod_on_ready() {
     if (g_api) g_api->log_info("All mods are ready");
 }
 
+CHUMOD_API void chumod_on_frame() {
+    // 由 Loader 兜底帧循环调用
+}
+
 CHUMOD_API void chumod_shutdown() {
     if (g_api) g_api->log_info("C++ mod shutdown");
 }
@@ -267,7 +275,7 @@ Loader 会在调用 `chumod_init` 前排序 Mod。如果依赖无法满足，Loa
 
 ## 崩溃保护
 
-ChuModLoader 使用 Rust `catch_unwind` 包裹 `chumod_init`、`chumod_on_ready` 和 `chumod_shutdown`。这能防止 Rust panic 跨越 Loader 边界，但**不能**保证任意内存错误安全：native 代码中的访问冲突仍可能导致进程崩溃。
+ChuModLoader 使用 Rust `catch_unwind` 包裹 `chumod_init`、`chumod_on_ready`、`chumod_on_frame` 和 `chumod_shutdown`。v3.0.0 还会安装顶层 SEH 过滤器，把 minidump 和可读 crash log 写到 `mods/crash/`。这**不能**保证任意内存错误安全：native 代码访问冲突仍可能在写出 dump 后终止进程。
 
 建议：
 
@@ -321,3 +329,15 @@ CHUMOD_API const char* chumod_min_loader_version() {
 ```
 
 面向未知 Loader 版本用户分发二进制时，也要通过 `struct_size` 和空指针检查保护单个字段。
+
+## 热重载
+
+v3.0.0 新增 `api->reload_mod`。它可以按显示名、文件名或文件 stem 热重载一个已加载 Mod。
+
+```c
+if (api->reload_mod) {
+    api->reload_mod("C++ Example");
+}
+```
+
+也可以创建 `mods/reload.flag` 触发所有当前已加载 Mod 热重载。Loader 处理完会删除该 flag。

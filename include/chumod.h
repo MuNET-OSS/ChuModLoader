@@ -122,6 +122,9 @@ typedef int   (*ChuModTomlGetStringFunc)(const char* section, const char* key, c
 /** @brief Return current mod manifest path, or NULL. / 返回当前 mod 的 manifest 路径，不存在则 NULL。 */
 typedef const char* (*ChuModGetManifestPathFunc)(void);
 
+/** @brief Reload a loaded mod by display name, file name, or file stem. Returns 0 on success. / 按显示名、文件名或文件 stem 热重载已加载 mod，0 表示成功。 */
+typedef int (*ChuModReloadModFunc)(const char* mod_name);
+
 /**
  * @brief API function table provided by loader.
  * @brief Loader 提供给 mod 的 API 函数表。
@@ -184,6 +187,9 @@ typedef struct {
 
     /** v2.5: manifest path API / v2.5: manifest 路径 API。 */
     ChuModGetManifestPathFunc get_manifest_path;
+
+    /** v3: hot reload API / v3: 热重载 API。 */
+    ChuModReloadModFunc reload_mod;
 } ChuModAPI;
 
 /**
@@ -193,6 +199,8 @@ typedef struct {
 typedef int (*ChuModInitFunc)(const ChuModInfo* info, const ChuModAPI* api);
 /** @brief Optional ready event called after all chumod_init calls finish. / 所有 chumod_init 完成后调用的可选就绪事件。 */
 typedef void (*ChuModReadyFunc)(void);
+/** @brief Optional frame event, called from loader fallback frame loop. / 可选帧事件，由 Loader 兜底帧循环调用。 */
+typedef void (*ChuModFrameFunc)(void);
 /** @brief Shutdown function called during loader unload. / Loader 卸载时调用的清理函数。 */
 typedef void (*ChuModShutdownFunc)(void);
 /** @brief Optional display name export. / 可选显示名导出。 */
@@ -208,6 +216,7 @@ typedef const char* (*ChuModMinLoaderVersionFunc)(void);
 
 #define CHUMOD_INIT_NAME     "chumod_init"
 #define CHUMOD_ON_READY_NAME "chumod_on_ready"
+#define CHUMOD_ON_FRAME_NAME "chumod_on_frame"
 #define CHUMOD_SHUTDOWN_NAME "chumod_shutdown"
 #define CHUMOD_NAME_NAME     "chumod_name"
 #define CHUMOD_DEPENDS_NAME  "chumod_depends"

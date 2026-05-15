@@ -1,6 +1,6 @@
-# ChuModLoader API 参考（v2.5.0）
+# ChuModLoader API 参考（v3.0.0）
 
-本文档说明 ChuModLoader v2.5.0 暴露给 Mod 的 C ABI。ABI 采用只追加字段的兼容策略：旧 Mod 可以继续工作，新 Mod 使用较新字段前应检查 `ChuModAPI::struct_size`。
+本文档说明 ChuModLoader v3.0.0 暴露给 Mod 的 C ABI。ABI 采用只追加字段的兼容策略：旧 Mod 可以继续工作，新 Mod 使用较新字段前应检查 `ChuModAPI::struct_size`。
 
 C/C++ 项目请包含 `include/chumod.h`。Rust 或其他语言需要镜像相同的 `#[repr(C)]` 布局和 `extern "C"` 函数签名。
 
@@ -35,8 +35,8 @@ typedef struct {
 
 | 字段 | 说明 |
 | --- | --- |
-| `api_version` | Loader ABI 版本。v2.5.0 为 `CHUMOD_API_VERSION`（`3`）。 |
-| `loader_version` | Loader 包版本字符串，例如 `"2.5.0"`。 |
+| `api_version` | Loader ABI 版本。v3.0.0 为 `CHUMOD_API_VERSION`（`3`）。 |
+| `loader_version` | Loader 包版本字符串，例如 `"3.0.0"`。 |
 | `game_module` | 游戏主程序模块名，通常为 `"chusanApp.exe"`；可能为 `NULL`。 |
 | `game_base` | 游戏镜像基址，找不到模块时为 `0`。 |
 | `game_size` | 游戏镜像大小。 |
@@ -91,6 +91,9 @@ typedef struct {
     ChuModTomlGetFloatFunc toml_get_float;
     ChuModTomlGetStringFunc toml_get_string;
     ChuModGetManifestPathFunc get_manifest_path;
+
+    /* v3 */
+    ChuModReloadModFunc reload_mod;
 } ChuModAPI;
 ```
 
@@ -103,6 +106,33 @@ if (api->struct_size >= offsetof(ChuModAPI, log_info) + sizeof(api->log_info) &&
     api->log_info("v2.5 logging is available");
 }
 ```
+
+## v3 API
+
+### 热重载
+
+```c
+typedef int (*ChuModReloadModFunc)(const char* mod_name);
+int reload_mod(const char* mod_name);
+```
+
+按显示名、DLL 文件名或文件 stem 热重载一个当前已加载的 Mod。Loader 会调用目标 Mod 的 `chumod_shutdown`，用 `FreeLibrary` 卸载 DLL，再重新加载，并调用 `chumod_init` 和可选的 `chumod_on_ready`。整个流程会被 panic guard 包裹并记录日志。
+
+参数：
+- `mod_name`：显示名、DLL 文件名（`example.dll`）或文件 stem（`example`）。
+
+返回值：成功为 `0`，失败为非 `0`。
+
+示例：
+
+```c
+if (api->reload_mod) {
+    int ret = api->reload_mod("Example Mod");
+    if (ret != 0) api->log_error("reload failed");
+}
+```
+
+外部触发：创建 `mods/reload.flag` 会热重载所有当前已加载 Mod。Loader 监视线程处理后会删除该 flag。
 
 ## v1 API
 
@@ -416,6 +446,7 @@ CHUMOD_API const char* chumod_version(void);
 CHUMOD_API const char* chumod_author(void);
 CHUMOD_API const char* chumod_min_loader_version(void);
 CHUMOD_API void chumod_on_ready(void);
+CHUMOD_API void chumod_on_frame(void);
 ```
 
 | 导出 | Loader 行为 |
@@ -428,6 +459,7 @@ CHUMOD_API void chumod_on_ready(void);
 | `chumod_author` | 返回 Mod 作者元数据。 |
 | `chumod_min_loader_version` | 返回最低 Loader 版本要求，例如 `"2.1.0"`。 |
 | `chumod_on_ready` | 所有成功的 `chumod_init` 完成后调用。 |
+| `chumod_on_frame` | `chumod_on_ready` 之后由 Loader 兜底帧循环调用；当前实现使用 16ms 间隔线程。 |
 
 示例：
 
