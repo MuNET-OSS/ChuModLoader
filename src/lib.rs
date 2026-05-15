@@ -35,6 +35,7 @@ unsafe extern "system" fn DllMain(h_module: HMODULE, reason: u32, _reserved: *mu
     match reason {
         DLL_PROCESS_ATTACH => {
             DisableThreadLibraryCalls(h_module);
+            loader::crash_dump::install();
             CreateThread(
                 std::ptr::null(),
                 0,

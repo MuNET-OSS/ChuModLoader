@@ -1,4 +1,5 @@
 pub mod dependency;
+pub mod crash_dump;
 pub mod frame_hook;
 pub mod hot_reload;
 pub mod log;

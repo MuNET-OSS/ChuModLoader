@@ -15,6 +15,7 @@ pub unsafe fn call_mod_init(
     match catch_unwind(AssertUnwindSafe(|| init(info, api))) {
         Ok(ret) => Some(ret),
         Err(_) => {
+            super::crash_dump::log_panic_context("chumod_init", name);
             log_info(&format!("mod init panic caught, skip mod: {}", name));
             None
         }
@@ -23,12 +24,14 @@ pub unsafe fn call_mod_init(
 
 pub unsafe fn call_mod_shutdown(name: &str, shutdown: ChuModShutdownFunc) {
     if catch_unwind(AssertUnwindSafe(|| shutdown())).is_err() {
+        super::crash_dump::log_panic_context("chumod_shutdown", name);
         log_info(&format!("mod shutdown panic caught: {}", name));
     }
 }
 
 pub unsafe fn call_mod_on_ready(name: &str, on_ready: ChuModReadyFunc) {
     if catch_unwind(AssertUnwindSafe(|| on_ready())).is_err() {
+        super::crash_dump::log_panic_context("chumod_on_ready", name);
         log_info(&format!(
             "mod on_ready panic caught: {} (callback=chumod_on_ready)",
             name
@@ -38,6 +41,7 @@ pub unsafe fn call_mod_on_ready(name: &str, on_ready: ChuModReadyFunc) {
 
 pub unsafe fn call_mod_on_frame(name: &str, on_frame: ChuModFrameFunc) {
     if catch_unwind(AssertUnwindSafe(|| on_frame())).is_err() {
+        super::crash_dump::log_panic_context("chumod_on_frame", name);
         log_info(&format!(
             "mod on_frame panic caught: {} (callback=chumod_on_frame)",
             name
