@@ -67,6 +67,10 @@ unsafe extern "system" fn frame_thread(_param: *mut std::ffi::c_void) -> u32 {
 }
 
 pub unsafe fn tick() {
+    if super::hot_reload::is_reloading() {
+        return;
+    }
+
     // 复制回调后释放锁，避免 Mod 回调里调用 Loader API 时发生锁重入。
     let frame_mods: Vec<_> = STATE
         .lock()

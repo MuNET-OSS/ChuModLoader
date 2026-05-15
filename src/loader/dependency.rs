@@ -9,6 +9,7 @@ use super::state::HMODULE;
 
 pub struct PendingMod {
     pub file_name: String,
+    pub full_path: String,
     pub handle: HMODULE,
     pub display_name: String,
     pub dependencies: Vec<String>,

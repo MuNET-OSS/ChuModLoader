@@ -48,6 +48,7 @@ static mut G_API: ChuModAPI = ChuModAPI {
     toml_get_float: None,
     toml_get_string: None,
     get_manifest_path: None,
+    reload_mod: None,
 };
 
 fn make_api() -> ChuModAPI {
@@ -85,6 +86,7 @@ fn make_api() -> ChuModAPI {
         toml_get_float: Some(config_toml::api_toml_get_float),
         toml_get_string: Some(config_toml::api_toml_get_string),
         get_manifest_path: Some(manifest::api_get_manifest_path),
+        reload_mod: Some(crate::loader::hot_reload::api_reload_mod),
     }
 }
 

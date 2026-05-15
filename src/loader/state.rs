@@ -13,6 +13,8 @@ pub struct LoadedMod {
     pub on_ready: Option<ChuModReadyFunc>,
     pub on_frame: Option<ChuModFrameFunc>,
     pub shutdown: Option<ChuModShutdownFunc>,
+    pub file_name: String,
+    pub full_path: String,
     pub name: String,
 }
 

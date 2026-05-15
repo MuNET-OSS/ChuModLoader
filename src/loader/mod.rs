@@ -1,5 +1,6 @@
 pub mod dependency;
 pub mod frame_hook;
+pub mod hot_reload;
 pub mod log;
 pub mod metadata;
 pub mod pe;
@@ -127,6 +128,7 @@ pub unsafe fn load_mods() {
         let dependencies = read_dependencies(mod_handle);
         pending_mods.push(PendingMod {
             file_name: mod_name,
+            full_path,
             handle: mod_handle,
             display_name,
             dependencies,
@@ -135,6 +137,7 @@ pub unsafe fn load_mods() {
 
     for pending in sort_mods(pending_mods) {
         let mod_name = pending.file_name;
+        let full_path = pending.full_path;
         let mod_handle = pending.handle;
         let display_name = pending.display_name;
 
@@ -222,6 +225,8 @@ pub unsafe fn load_mods() {
             on_ready,
             on_frame,
             shutdown,
+            file_name: mod_name.clone(),
+            full_path,
             name: display_name.clone(),
         });
         write_log_inner(&mut state, &format!("loaded mod: {}", display_name));
@@ -242,9 +247,11 @@ pub unsafe fn load_mods() {
     }
 
     frame_hook::start_if_needed();
+    hot_reload::start_monitor();
 }
 
 pub unsafe fn unload_mods() {
+    hot_reload::stop_monitor();
     frame_hook::stop();
     let mut state = STATE.lock().unwrap();
     while let Some(m) = state.mods.pop() {
