@@ -9,6 +9,7 @@ mod rtti;
 use crate::types::ChuModAPI;
 
 pub use config_ini::set_current_config;
+pub use config_toml::load_current_config as load_current_toml_config;
 pub use rtti::set_rtti_info;
 
 static mut G_API: ChuModAPI = ChuModAPI {
@@ -39,6 +40,11 @@ static mut G_API: ChuModAPI = ChuModAPI {
     log_warn: None,
     log_error: None,
     log_path: std::ptr::null(),
+    toml_section_exists: None,
+    toml_get_bool: None,
+    toml_get_int: None,
+    toml_get_float: None,
+    toml_get_string: None,
 };
 
 fn make_api() -> ChuModAPI {
@@ -70,6 +76,11 @@ fn make_api() -> ChuModAPI {
         log_warn: Some(log_api::api_log_warn),
         log_error: Some(log_api::api_log_error),
         log_path: std::ptr::null(),
+        toml_section_exists: Some(config_toml::api_toml_section_exists),
+        toml_get_bool: Some(config_toml::api_toml_get_bool),
+        toml_get_int: Some(config_toml::api_toml_get_int),
+        toml_get_float: Some(config_toml::api_toml_get_float),
+        toml_get_string: Some(config_toml::api_toml_get_string),
     }
 }
 

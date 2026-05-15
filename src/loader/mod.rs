@@ -159,11 +159,19 @@ pub unsafe fn load_mods() {
                 .unwrap_or(&mod_name);
             let mod_log_path = format!("{}\\{}.log", log_dir, mod_stem);
             let mod_log_path_c = std::ffi::CString::new(mod_log_path.clone()).unwrap_or_default();
+            let toml_config_path = format!("{}\\{}.toml", config_dir, mod_stem);
+            let ini_config_path = format!("{}\\{}.ini", config_dir, mod_stem);
+            let toml_config_exists = std::path::Path::new(&toml_config_path).exists();
 
             let api = api_impl::get_api();
             (*api).log = Some(write_log_variadic);
             api_impl::set_log_path(mod_log_path_c.as_ptr());
-            api_impl::set_current_config(&format!("{}\\{}.ini", config_dir, mod_stem));
+            api_impl::set_current_config(if toml_config_exists {
+                &toml_config_path
+            } else {
+                &ini_config_path
+            });
+            api_impl::load_current_toml_config(toml_config_exists.then_some(toml_config_path.as_str()));
 
             if let Ok(mut state) = STATE.lock() {
                 state.current_mod_log_file = File::create(&mod_log_path).ok();
@@ -175,6 +183,7 @@ pub unsafe fn load_mods() {
                 state.current_mod_log_file = None;
             }
             api_impl::set_log_path(std::ptr::null());
+            api_impl::load_current_toml_config(None);
 
             if ret != Some(0) {
                 if let Some(ret) = ret {

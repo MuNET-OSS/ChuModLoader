@@ -1,7 +1,7 @@
 use std::ffi::{c_char, c_void};
 
 pub const CHUMOD_API_VERSION: u32 = 3;
-pub const LOADER_VERSION: &str = "2.1.0";
+pub const LOADER_VERSION: &str = "2.5.0";
 
 #[repr(C)]
 pub struct ChuModInfo {
@@ -53,6 +53,13 @@ pub struct ChuModAPI {
     pub log_warn: Option<unsafe extern "C" fn(*const c_char)>,
     pub log_error: Option<unsafe extern "C" fn(*const c_char)>,
     pub log_path: *const c_char,
+    pub toml_section_exists: Option<unsafe extern "C" fn(*const c_char) -> i32>,
+    pub toml_get_bool: Option<unsafe extern "C" fn(*const c_char, *const c_char, i32) -> i32>,
+    pub toml_get_int: Option<unsafe extern "C" fn(*const c_char, *const c_char, i32) -> i32>,
+    pub toml_get_float: Option<unsafe extern "C" fn(*const c_char, *const c_char, f32) -> f32>,
+    pub toml_get_string: Option<
+        unsafe extern "C" fn(*const c_char, *const c_char, *mut c_char, u32, *const c_char) -> i32,
+    >,
 }
 
 pub type ChuModInitFunc = unsafe extern "C" fn(*const ChuModInfo, *const ChuModAPI) -> i32;
