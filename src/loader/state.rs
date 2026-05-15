@@ -1,0 +1,42 @@
+use std::ffi::c_void;
+use std::fs::File;
+use std::sync::Mutex;
+
+use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
+
+use crate::types::ChuModShutdownFunc;
+
+pub type HMODULE = *mut c_void;
+
+pub struct LoadedMod {
+    pub handle: HMODULE,
+    pub shutdown: Option<ChuModShutdownFunc>,
+    pub name: String,
+}
+
+unsafe impl Send for LoadedMod {}
+
+pub struct LoaderState {
+    pub loaded: bool,
+    pub mods: Vec<LoadedMod>,
+    pub base_dir: String,
+    pub log_file: Option<File>,
+    pub console: HANDLE,
+}
+
+unsafe impl Send for LoaderState {}
+
+impl Default for LoaderState {
+    fn default() -> Self {
+        Self {
+            loaded: false,
+            mods: Vec::new(),
+            base_dir: String::new(),
+            log_file: None,
+            console: INVALID_HANDLE_VALUE,
+        }
+    }
+}
+
+pub static STATE: once_cell::sync::Lazy<Mutex<LoaderState>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(LoaderState::default()));

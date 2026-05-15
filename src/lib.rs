@@ -3,6 +3,7 @@
 
 mod api_impl;
 mod loader;
+mod types;
 
 use std::ffi::c_void;
 use windows_sys::Win32::Foundation::{BOOL, HMODULE, TRUE};

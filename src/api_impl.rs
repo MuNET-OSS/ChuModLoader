@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::ffi::{c_char, c_void, CStr};
 use std::sync::Mutex;
 
-use crate::loader::ChuModAPI;
+use crate::types::ChuModAPI;
 use retour::RawDetour;
 
 const PAGE_EXECUTE_READWRITE: u32 = 0x40;
