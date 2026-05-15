@@ -19,7 +19,8 @@ use windows_sys::Win32::System::LibraryLoader::{
 
 use crate::api_impl;
 use crate::types::{
-    ChuModInfo, ChuModInitFunc, ChuModNameFunc, ChuModShutdownFunc, CHUMOD_API_VERSION,
+    ChuModInfo, ChuModInitFunc, ChuModNameFunc, ChuModReadyFunc, ChuModShutdownFunc,
+    CHUMOD_API_VERSION,
 };
 
 use self::dependency::{read_dependencies, sort_mods, PendingMod};
@@ -27,7 +28,7 @@ use self::log::{log_info, write_log_inner, write_log_variadic};
 use self::metadata::{read_metadata, should_load_metadata};
 use self::pe::{get_self_base_dir, parse_game_info, read_game_version};
 use self::scanner::{ensure_mods_layout, scan_manifest_files, scan_mod_files};
-use self::seh::{call_mod_init, call_mod_shutdown};
+use self::seh::{call_mod_init, call_mod_on_ready, call_mod_shutdown};
 use self::state::{LoadedMod, STATE};
 
 extern "system" {
@@ -208,10 +209,13 @@ pub unsafe fn load_mods() {
 
         let shutdown_ptr = GetProcAddress(mod_handle, b"chumod_shutdown\0".as_ptr());
         let shutdown: Option<ChuModShutdownFunc> = shutdown_ptr.map(|f| std::mem::transmute(f));
+        let on_ready_ptr = GetProcAddress(mod_handle, b"chumod_on_ready\0".as_ptr());
+        let on_ready: Option<ChuModReadyFunc> = on_ready_ptr.map(|f| std::mem::transmute(f));
 
         let mut state = STATE.lock().unwrap();
         state.mods.push(LoadedMod {
             handle: mod_handle,
+            on_ready,
             shutdown,
             name: display_name.clone(),
         });
@@ -221,6 +225,16 @@ pub unsafe fn load_mods() {
     let mut state = STATE.lock().unwrap();
     let count = state.mods.len();
     write_log_inner(&mut state, &format!("mods loaded: {}", count));
+    let ready_mods: Vec<_> = state
+        .mods
+        .iter()
+        .filter_map(|m| m.on_ready.map(|on_ready| (m.name.clone(), on_ready)))
+        .collect();
+    drop(state);
+
+    for (name, on_ready) in ready_mods {
+        call_mod_on_ready(&name, on_ready);
+    }
 }
 
 pub unsafe fn unload_mods() {

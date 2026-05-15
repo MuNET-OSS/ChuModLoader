@@ -4,12 +4,13 @@ use std::sync::Mutex;
 
 use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
 
-use crate::types::ChuModShutdownFunc;
+use crate::types::{ChuModReadyFunc, ChuModShutdownFunc};
 
 pub type HMODULE = *mut c_void;
 
 pub struct LoadedMod {
     pub handle: HMODULE,
+    pub on_ready: Option<ChuModReadyFunc>,
     pub shutdown: Option<ChuModShutdownFunc>,
     pub name: String,
 }
