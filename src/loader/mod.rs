@@ -19,6 +19,7 @@ use windows_sys::Win32::System::LibraryLoader::{
 use crate::api_impl;
 use crate::types::{ChuModInfo, ChuModInitFunc, ChuModNameFunc, ChuModShutdownFunc, CHUMOD_API_VERSION};
 
+use self::dependency::{read_dependencies, sort_mods, PendingMod};
 use self::log::{log_info, write_log_inner, write_log_variadic};
 use self::pe::{get_self_base_dir, parse_game_info};
 use self::scanner::{ensure_mods_layout, scan_mod_files};
@@ -65,6 +66,7 @@ pub unsafe fn load_mods() {
     log_info(&format!("scan mods dir: {}", mods_dir));
     log_info(&format!("config file: {}", ini_path));
 
+    let mut pending_mods = Vec::new();
     for (mod_name, full_path) in scan_mod_files(&mods_dir, &ini_path) {
         let full_path_c = format!("{}\0", full_path);
         let mod_handle = LoadLibraryA(full_path_c.as_ptr());
@@ -86,6 +88,21 @@ pub unsafe fn load_mods() {
                 display_name = CStr::from_ptr(n).to_string_lossy().into_owned();
             }
         }
+
+        let dependencies = read_dependencies(mod_handle);
+        pending_mods.push(PendingMod {
+            file_name: mod_name,
+            path: full_path,
+            handle: mod_handle,
+            display_name,
+            dependencies,
+        });
+    }
+
+    for pending in sort_mods(pending_mods) {
+        let mod_name = pending.file_name;
+        let mod_handle = pending.handle;
+        let display_name = pending.display_name;
 
         let init_fn_ptr = GetProcAddress(mod_handle, b"chumod_init\0".as_ptr());
         if let Some(init_fn) = init_fn_ptr {
