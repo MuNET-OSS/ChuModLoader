@@ -29,7 +29,7 @@ extern "C" {
 typedef struct {
     /** API version supported by loader / Loader 支持的 API 版本。 */
     uint32_t api_version;
-    /** Loader version string, e.g. "2.1.0" / Loader 版本字符串。 */
+    /** Loader version string, e.g. "2.5.0" / Loader 版本字符串。 */
     const char* loader_version;
     /** Game executable module name or NULL / 游戏主程序模块名，可能为 NULL。 */
     const char* game_module;
@@ -51,6 +51,8 @@ typedef struct {
 
 /** @brief Write formatted text to loader log. / 写入格式化文本到 loader 日志。 */
 typedef void (*ChuModLogFunc)(const char* fmt, ...);
+/** @brief Write plain INFO/WARN/ERROR text to loader log. / 写入普通分级日志文本。 */
+typedef void (*ChuModLogPlainFunc)(const char* message);
 
 /**
  * @brief Scan memory by pattern and mask. Mask uses 'x' for exact byte and '?' for wildcard. Returns address or 0.
@@ -106,6 +108,20 @@ typedef int   (*ChuModConfigSetBoolFunc)(const char* key, int value);
 /** @brief Write string to [config]. Returns 0 on success. / 写入字符串到 [config]，0 表示成功。 */
 typedef int   (*ChuModConfigSetStringFunc)(const char* key, const char* value);
 
+/** @brief Check whether a TOML section exists. / 检查 TOML section 是否存在。 */
+typedef int   (*ChuModTomlSectionExistsFunc)(const char* section);
+/** @brief Read bool from TOML section/key. / 从 TOML section/key 读取布尔值。 */
+typedef int   (*ChuModTomlGetBoolFunc)(const char* section, const char* key, int default_val);
+/** @brief Read integer from TOML section/key. / 从 TOML section/key 读取整数。 */
+typedef int   (*ChuModTomlGetIntFunc)(const char* section, const char* key, int default_val);
+/** @brief Read float from TOML section/key. / 从 TOML section/key 读取浮点数。 */
+typedef float (*ChuModTomlGetFloatFunc)(const char* section, const char* key, float default_val);
+/** @brief Read string from TOML section/key into buf. / 从 TOML section/key 读取字符串到 buf。 */
+typedef int   (*ChuModTomlGetStringFunc)(const char* section, const char* key, char* buf, uint32_t buf_size, const char* default_val);
+
+/** @brief Return current mod manifest path, or NULL. / 返回当前 mod 的 manifest 路径，不存在则 NULL。 */
+typedef const char* (*ChuModGetManifestPathFunc)(void);
+
 /**
  * @brief API function table provided by loader.
  * @brief Loader 提供给 mod 的 API 函数表。
@@ -150,6 +166,24 @@ typedef struct {
     ChuModConfigSetFloatFunc config_set_float;
     ChuModConfigSetBoolFunc config_set_bool;
     ChuModConfigSetStringFunc config_set_string;
+
+    /** v2.5: plain leveled logging APIs / v2.5: 普通分级日志 API。 */
+    ChuModLogPlainFunc log_info;
+    ChuModLogPlainFunc log_warn;
+    ChuModLogPlainFunc log_error;
+
+    /** v2.5: per-mod log file path / v2.5: 单 Mod 日志文件路径。 */
+    const char* log_path;
+
+    /** v2.5: TOML config APIs / v2.5: TOML 配置 API。 */
+    ChuModTomlSectionExistsFunc toml_section_exists;
+    ChuModTomlGetBoolFunc toml_get_bool;
+    ChuModTomlGetIntFunc toml_get_int;
+    ChuModTomlGetFloatFunc toml_get_float;
+    ChuModTomlGetStringFunc toml_get_string;
+
+    /** v2.5: manifest path API / v2.5: manifest 路径 API。 */
+    ChuModGetManifestPathFunc get_manifest_path;
 } ChuModAPI;
 
 /**
@@ -157,6 +191,8 @@ typedef struct {
  * @brief 初始化函数。Loader 在依赖就绪后调用；返回 0 表示成功。
  */
 typedef int (*ChuModInitFunc)(const ChuModInfo* info, const ChuModAPI* api);
+/** @brief Optional ready event called after all chumod_init calls finish. / 所有 chumod_init 完成后调用的可选就绪事件。 */
+typedef void (*ChuModReadyFunc)(void);
 /** @brief Shutdown function called during loader unload. / Loader 卸载时调用的清理函数。 */
 typedef void (*ChuModShutdownFunc)(void);
 /** @brief Optional display name export. / 可选显示名导出。 */
@@ -171,6 +207,7 @@ typedef const char* (*ChuModAuthorFunc)(void);
 typedef const char* (*ChuModMinLoaderVersionFunc)(void);
 
 #define CHUMOD_INIT_NAME     "chumod_init"
+#define CHUMOD_ON_READY_NAME "chumod_on_ready"
 #define CHUMOD_SHUTDOWN_NAME "chumod_shutdown"
 #define CHUMOD_NAME_NAME     "chumod_name"
 #define CHUMOD_DEPENDS_NAME  "chumod_depends"
