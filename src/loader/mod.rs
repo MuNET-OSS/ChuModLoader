@@ -25,7 +25,7 @@ use crate::types::{
 use self::dependency::{read_dependencies, sort_mods, PendingMod};
 use self::log::{log_info, write_log_inner, write_log_variadic};
 use self::metadata::{read_metadata, should_load_metadata};
-use self::pe::{get_self_base_dir, parse_game_info};
+use self::pe::{get_self_base_dir, parse_game_info, read_game_version};
 use self::scanner::{ensure_mods_layout, scan_mod_files};
 use self::seh::{call_mod_init, call_mod_shutdown};
 use self::state::{LoadedMod, STATE};
@@ -65,6 +65,11 @@ pub unsafe fn load_mods() {
     } else {
         (0, 0, 0, 0, 0)
     };
+    let game_version = read_game_version(&base_dir).unwrap_or_default();
+    if !game_version.is_empty() {
+        log_info(&format!("game version: {}", game_version));
+    }
+    let game_version_c = std::ffi::CString::new(game_version).unwrap_or_default();
     api_impl::set_rtti_info(rdata_base, rdata_size as usize, text_base);
 
     let (mods_dir, ini_path) = ensure_mods_layout(&base_dir);
@@ -142,6 +147,7 @@ pub unsafe fn load_mods() {
                 text_size,
                 rdata_base,
                 rdata_size,
+                game_version: game_version_c.as_ptr(),
             };
 
             let api = api_impl::get_api();

@@ -14,6 +14,7 @@ pub struct ChuModInfo {
     pub text_size: u32,
     pub rdata_base: usize,
     pub rdata_size: u32,
+    pub game_version: *const c_char,
 }
 
 #[repr(C)]
