@@ -1,6 +1,8 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use crate::types::{ChuModAPI, ChuModInfo, ChuModInitFunc, ChuModReadyFunc, ChuModShutdownFunc};
+use crate::types::{
+    ChuModAPI, ChuModFrameFunc, ChuModInfo, ChuModInitFunc, ChuModReadyFunc, ChuModShutdownFunc,
+};
 
 use super::log::log_info;
 
@@ -27,6 +29,18 @@ pub unsafe fn call_mod_shutdown(name: &str, shutdown: ChuModShutdownFunc) {
 
 pub unsafe fn call_mod_on_ready(name: &str, on_ready: ChuModReadyFunc) {
     if catch_unwind(AssertUnwindSafe(|| on_ready())).is_err() {
-        log_info(&format!("mod on_ready panic caught: {}", name));
+        log_info(&format!(
+            "mod on_ready panic caught: {} (callback=chumod_on_ready)",
+            name
+        ));
+    }
+}
+
+pub unsafe fn call_mod_on_frame(name: &str, on_frame: ChuModFrameFunc) {
+    if catch_unwind(AssertUnwindSafe(|| on_frame())).is_err() {
+        log_info(&format!(
+            "mod on_frame panic caught: {} (callback=chumod_on_frame)",
+            name
+        ));
     }
 }

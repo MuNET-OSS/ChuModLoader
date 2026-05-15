@@ -1,4 +1,5 @@
 pub mod dependency;
+pub mod frame_hook;
 pub mod log;
 pub mod metadata;
 pub mod pe;
@@ -19,7 +20,8 @@ use windows_sys::Win32::System::LibraryLoader::{
 
 use crate::api_impl;
 use crate::types::{
-    ChuModInfo, ChuModInitFunc, ChuModNameFunc, ChuModReadyFunc, ChuModShutdownFunc,
+    ChuModFrameFunc, ChuModInfo, ChuModInitFunc, ChuModNameFunc, ChuModReadyFunc,
+    ChuModShutdownFunc,
     CHUMOD_API_VERSION,
 };
 
@@ -211,11 +213,14 @@ pub unsafe fn load_mods() {
         let shutdown: Option<ChuModShutdownFunc> = shutdown_ptr.map(|f| std::mem::transmute(f));
         let on_ready_ptr = GetProcAddress(mod_handle, b"chumod_on_ready\0".as_ptr());
         let on_ready: Option<ChuModReadyFunc> = on_ready_ptr.map(|f| std::mem::transmute(f));
+        let on_frame_ptr = GetProcAddress(mod_handle, b"chumod_on_frame\0".as_ptr());
+        let on_frame: Option<ChuModFrameFunc> = on_frame_ptr.map(|f| std::mem::transmute(f));
 
         let mut state = STATE.lock().unwrap();
         state.mods.push(LoadedMod {
             handle: mod_handle,
             on_ready,
+            on_frame,
             shutdown,
             name: display_name.clone(),
         });
@@ -235,9 +240,12 @@ pub unsafe fn load_mods() {
     for (name, on_ready) in ready_mods {
         call_mod_on_ready(&name, on_ready);
     }
+
+    frame_hook::start_if_needed();
 }
 
 pub unsafe fn unload_mods() {
+    frame_hook::stop();
     let mut state = STATE.lock().unwrap();
     while let Some(m) = state.mods.pop() {
         write_log_inner(&mut state, &format!("unloading mod: {}", m.name));
