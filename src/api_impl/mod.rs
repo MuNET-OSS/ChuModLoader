@@ -3,6 +3,7 @@ mod config_toml;
 mod hook;
 mod ipc;
 mod log_api;
+mod manifest;
 mod memory;
 mod rtti;
 
@@ -10,6 +11,7 @@ use crate::types::ChuModAPI;
 
 pub use config_ini::set_current_config;
 pub use config_toml::load_current_config as load_current_toml_config;
+pub use manifest::set_current_manifest_path;
 pub use rtti::set_rtti_info;
 
 static mut G_API: ChuModAPI = ChuModAPI {
@@ -45,6 +47,7 @@ static mut G_API: ChuModAPI = ChuModAPI {
     toml_get_int: None,
     toml_get_float: None,
     toml_get_string: None,
+    get_manifest_path: None,
 };
 
 fn make_api() -> ChuModAPI {
@@ -81,6 +84,7 @@ fn make_api() -> ChuModAPI {
         toml_get_int: Some(config_toml::api_toml_get_int),
         toml_get_float: Some(config_toml::api_toml_get_float),
         toml_get_string: Some(config_toml::api_toml_get_string),
+        get_manifest_path: Some(manifest::api_get_manifest_path),
     }
 }
 

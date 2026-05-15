@@ -140,3 +140,33 @@ pub fn scan_mod_files(mods_dir: &str, ini_path: &str) -> Vec<(String, String)> {
         mods
     }
 }
+
+pub fn scan_manifest_files(base_dir: &str) -> Vec<String> {
+    unsafe {
+        let manifest_dir = format!("{}\\mods\\manifest", base_dir);
+        CreateDirectoryA(format!("{}\0", manifest_dir).as_ptr(), std::ptr::null());
+
+        let pattern = format!("{}\\*.toml\0", manifest_dir);
+        let mut find_data: WIN32_FIND_DATAA = std::mem::zeroed();
+        let find_handle = FindFirstFileA(pattern.as_ptr(), &mut find_data);
+        if find_handle == INVALID_HANDLE_VALUE {
+            return Vec::new();
+        }
+
+        let mut manifests = Vec::new();
+        loop {
+            if (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 {
+                let name = CStr::from_ptr(find_data.cFileName.as_ptr() as *const c_char)
+                    .to_string_lossy()
+                    .into_owned();
+                manifests.push(format!("{}\\{}", manifest_dir, name));
+            }
+
+            if FindNextFileA(find_handle, &mut find_data) == 0 {
+                break;
+            }
+        }
+        FindClose(find_handle);
+        manifests
+    }
+}

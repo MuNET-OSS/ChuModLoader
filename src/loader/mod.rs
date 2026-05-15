@@ -26,7 +26,7 @@ use self::dependency::{read_dependencies, sort_mods, PendingMod};
 use self::log::{log_info, write_log_inner, write_log_variadic};
 use self::metadata::{read_metadata, should_load_metadata};
 use self::pe::{get_self_base_dir, parse_game_info, read_game_version};
-use self::scanner::{ensure_mods_layout, scan_mod_files};
+use self::scanner::{ensure_mods_layout, scan_manifest_files, scan_mod_files};
 use self::seh::{call_mod_init, call_mod_shutdown};
 use self::state::{LoadedMod, STATE};
 
@@ -75,6 +75,14 @@ pub unsafe fn load_mods() {
     let (mods_dir, ini_path) = ensure_mods_layout(&base_dir);
     log_info(&format!("scan mods dir: {}", mods_dir));
     log_info(&format!("config file: {}", ini_path));
+    let manifests = scan_manifest_files(&base_dir);
+    {
+        let mut state = STATE.lock().unwrap();
+        state.manifest_paths = manifests.clone();
+    }
+    for manifest in &manifests {
+        log_info(&format!("manifest found: {}", manifest));
+    }
 
     let mut pending_mods = Vec::new();
     for (mod_name, full_path) in scan_mod_files(&mods_dir, &ini_path) {
@@ -162,6 +170,8 @@ pub unsafe fn load_mods() {
             let toml_config_path = format!("{}\\{}.toml", config_dir, mod_stem);
             let ini_config_path = format!("{}\\{}.ini", config_dir, mod_stem);
             let toml_config_exists = std::path::Path::new(&toml_config_path).exists();
+            let manifest_path = format!("{}\\mods\\manifest\\{}.toml", base_dir, mod_stem);
+            let manifest_exists = std::path::Path::new(&manifest_path).exists();
 
             let api = api_impl::get_api();
             (*api).log = Some(write_log_variadic);
@@ -172,6 +182,7 @@ pub unsafe fn load_mods() {
                 &ini_config_path
             });
             api_impl::load_current_toml_config(toml_config_exists.then_some(toml_config_path.as_str()));
+            api_impl::set_current_manifest_path(manifest_exists.then_some(manifest_path.as_str()));
 
             if let Ok(mut state) = STATE.lock() {
                 state.current_mod_log_file = File::create(&mod_log_path).ok();
@@ -184,6 +195,7 @@ pub unsafe fn load_mods() {
             }
             api_impl::set_log_path(std::ptr::null());
             api_impl::load_current_toml_config(None);
+            api_impl::set_current_manifest_path(None);
 
             if ret != Some(0) {
                 if let Some(ret) = ret {

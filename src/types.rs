@@ -60,6 +60,7 @@ pub struct ChuModAPI {
     pub toml_get_string: Option<
         unsafe extern "C" fn(*const c_char, *const c_char, *mut c_char, u32, *const c_char) -> i32,
     >,
+    pub get_manifest_path: Option<unsafe extern "C" fn() -> *const c_char>,
 }
 
 pub type ChuModInitFunc = unsafe extern "C" fn(*const ChuModInfo, *const ChuModAPI) -> i32;
