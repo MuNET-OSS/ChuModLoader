@@ -1,6 +1,6 @@
 use std::ffi::{c_char, c_void};
 
-pub const CHUMOD_API_VERSION: u32 = 2;
+pub const CHUMOD_API_VERSION: u32 = 3;
 pub const LOADER_VERSION: &str = "2.1.0";
 
 #[repr(C)]
