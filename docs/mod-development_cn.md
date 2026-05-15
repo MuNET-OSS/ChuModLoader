@@ -1,80 +1,35 @@
-# Mod 开发指南
+# ChuModLoader Mod 开发指南（v2.5.0）
 
-## 概述
+ChuModLoader 是一个 `version.dll` 代理，会在 `chusanApp.exe` 启动时从 `mods/` 加载 Mod DLL。Mod 可以用多种方式编写，并按需接入更丰富的 API。
 
-Mod = Win32 DLL（32 位），放到 `mods/` 目录。Loader 启动时自动加载。
+## 三种 Mod 方式
 
-三种写法：
+1. **Rust Mod**：构建 Win32 DLL，导出带 `#[no_mangle]` 的 `extern "C"` 函数。
+2. **C/C++ Mod**：包含 `include/chumod.h`，导出 `CHUMOD_API` 函数，并调用 `ChuModAPI` 函数表。
+3. **Plain DLL**：只提供 `DllMain`。ChuModLoader 仍会加载 DLL；除非存在匹配导出，否则不会调用 API 回调。
 
-1. **Rust DLL** — 用 Rust 编写，导出 C ABI 接口。
-2. **C/C++ ChuMod API** — 导出 `chumod_init` 等函数，拿到游戏信息和工具 API。
-3. **普通 DLL** — 只用 `DllMain`。
+所有新增导出都是可选的。只提供 `chumod_init`、`chumod_shutdown`、`chumod_name` 的旧 Mod 会继续工作。
 
-可以混用。
+## Loader 生命周期
 
-## 最简示例（普通 DLL）
+对接入 API 的 Mod，生命周期如下：
 
-### Rust
+```text
+LoadLibrary(mod.dll)
+  -> 读取可选 metadata/dependency 导出
+  -> chumod_init(info, api)
+  -> 所有成功初始化的 Mod 完成后：chumod_on_ready()
+  -> 游戏运行中
+  -> chumod_shutdown()
+  -> FreeLibrary(mod.dll)
+```
+
+`chumod_init` 适合本地初始化和 hook 创建。需要等待其他 Mod 服务存在时，使用 `chumod_on_ready`。`chumod_shutdown` 中应禁用 hook 并释放资源。
+
+## Quick Start：Rust
 
 ```rust
-use std::ffi::c_void;
-
-const DLL_PROCESS_ATTACH: u32 = 1;
-
-extern "system" {
-    fn MessageBoxA(hwnd: *mut c_void, text: *const u8, caption: *const u8, flags: u32) -> i32;
-}
-
-#[no_mangle]
-pub unsafe extern "system" fn DllMain(_h: *mut c_void, reason: u32, _lp: *const c_void) -> i32 {
-    if reason == DLL_PROCESS_ATTACH {
-        MessageBoxA(std::ptr::null_mut(), b"Mod loaded!\0".as_ptr(), b"Hello\0".as_ptr(), 0);
-    }
-    1
-}
-```
-
-Cargo.toml：
-
-```toml
-[package]
-name = "my-mod"
-version = "0.1.0"
-edition = "2021"
-
-[lib]
-crate-type = ["cdylib"]
-```
-
-.cargo/config.toml：
-
-```toml
-[build]
-target = "i686-pc-windows-msvc"
-```
-
-编译后丢到 `mods/`。
-
-### C/C++
-
-```c
-#include <Windows.h>
-
-BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
-    if (reason == DLL_PROCESS_ATTACH) {
-        MessageBoxA(NULL, "Mod loaded!", "Hello", MB_OK);
-    }
-    return TRUE;
-}
-```
-
-## ChuMod API 示例
-
-### Rust
-
-```rust
-use std::ffi::{c_char, c_void};
-use std::slice;
+use std::ffi::{c_char, c_void, CStr};
 
 #[repr(C)]
 pub struct ChuModInfo {
@@ -85,6 +40,9 @@ pub struct ChuModInfo {
     pub game_size: u32,
     pub text_base: usize,
     pub text_size: u32,
+    pub rdata_base: usize,
+    pub rdata_size: u32,
+    pub game_version: *const c_char,
 }
 
 #[repr(C)]
@@ -102,405 +60,264 @@ pub struct ChuModAPI {
     pub register_service: Option<unsafe extern "C" fn(*const c_char, *mut c_void) -> i32>,
     pub get_service: Option<unsafe extern "C" fn(*const c_char) -> *mut c_void>,
     pub publish: Option<unsafe extern "C" fn(*const c_char, *mut c_void, u32) -> i32>,
-    pub subscribe: Option<unsafe extern "C" fn(*const c_char, Option<unsafe extern "C" fn(*const c_char, *mut c_void, u32)>) -> i32>,
+    pub subscribe: usize,
+    pub rtti_find_vtable: Option<unsafe extern "C" fn(*const c_char) -> usize>,
+    pub config_get_int: Option<unsafe extern "C" fn(*const c_char, i32) -> i32>,
+    pub config_get_float: Option<unsafe extern "C" fn(*const c_char, f32) -> f32>,
+    pub config_get_bool: Option<unsafe extern "C" fn(*const c_char, i32) -> i32>,
+    pub config_get_string: usize,
+    pub config_set_int: Option<unsafe extern "C" fn(*const c_char, i32) -> i32>,
+    pub config_set_float: Option<unsafe extern "C" fn(*const c_char, f32) -> i32>,
+    pub config_set_bool: Option<unsafe extern "C" fn(*const c_char, i32) -> i32>,
+    pub config_set_string: Option<unsafe extern "C" fn(*const c_char, *const c_char) -> i32>,
+    pub log_info: Option<unsafe extern "C" fn(*const c_char)>,
+    pub log_warn: Option<unsafe extern "C" fn(*const c_char)>,
+    pub log_error: Option<unsafe extern "C" fn(*const c_char)>,
+    pub log_path: *const c_char,
+    pub toml_section_exists: Option<unsafe extern "C" fn(*const c_char) -> i32>,
+    pub toml_get_bool: Option<unsafe extern "C" fn(*const c_char, *const c_char, i32) -> i32>,
+    pub toml_get_int: Option<unsafe extern "C" fn(*const c_char, *const c_char, i32) -> i32>,
+    pub toml_get_float: Option<unsafe extern "C" fn(*const c_char, *const c_char, f32) -> f32>,
+    pub toml_get_string: usize,
+    pub get_manifest_path: Option<unsafe extern "C" fn() -> *const c_char>,
 }
 
-static mut G_API: Option<&'static ChuModAPI> = None;
+static mut API: *const ChuModAPI = std::ptr::null();
 
 #[no_mangle]
 pub extern "C" fn chumod_name() -> *const c_char {
-    b"Example Rust Mod\0".as_ptr() as *const c_char
+    b"Rust Example\0".as_ptr() as *const c_char
+}
+
+#[no_mangle]
+pub extern "C" fn chumod_version() -> *const c_char {
+    b"1.0.0\0".as_ptr() as *const c_char
+}
+
+#[no_mangle]
+pub extern "C" fn chumod_min_loader_version() -> *const c_char {
+    b"2.5.0\0".as_ptr() as *const c_char
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn chumod_init(info: *const ChuModInfo, api: *const ChuModAPI) -> i32 {
-    G_API = Some(&*api);
-    
-    let info = &*info;
-    if let Some(log) = api.as_ref().unwrap().log {
-        log("Rust mod loaded!\0".as_ptr() as *const c_char);
+    API = api;
+    let api_ref = &*api;
+    if let Some(log_info) = api_ref.log_info {
+        log_info(b"Rust mod initialized\0".as_ptr() as *const c_char);
     }
-    
+    if let Some(toml_get_bool) = api_ref.toml_get_bool {
+        let enabled = toml_get_bool(
+            b"config\0".as_ptr() as *const c_char,
+            b"enabled\0".as_ptr() as *const c_char,
+            1,
+        );
+        if enabled == 0 {
+            return 1;
+        }
+    }
+    if !(*info).game_version.is_null() {
+        let _version = CStr::from_ptr((*info).game_version).to_string_lossy();
+    }
     0
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn chumod_on_ready() {
+    if !API.is_null() {
+        if let Some(log_info) = (*API).log_info {
+            log_info(b"All mods are ready\0".as_ptr() as *const c_char);
+        }
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn chumod_shutdown() {
-    if let Some(api) = G_API {
-        if let Some(log) = api.log {
-            log("Rust mod shutdown\0".as_ptr() as *const c_char);
+    if !API.is_null() {
+        if let Some(log_info) = (*API).log_info {
+            log_info(b"Rust mod shutdown\0".as_ptr() as *const c_char);
         }
     }
 }
 ```
 
-### C/C++
+编译为 32 位 Windows DLL 后放入 `mods/`。
 
-```c
+## Quick Start：C++
+
+```cpp
 #include "chumod.h"
 
-static const ChuModAPI* g_api = NULL;
+static const ChuModAPI* g_api = nullptr;
 
-CHUMOD_API const char* chumod_name() { return "Example Mod"; }
+CHUMOD_API const char* chumod_name() { return "C++ Example"; }
+CHUMOD_API const char* chumod_version() { return "1.0.0"; }
+CHUMOD_API const char* chumod_author() { return "Example Team"; }
+CHUMOD_API const char* chumod_min_loader_version() { return "2.5.0"; }
 
 CHUMOD_API int chumod_init(const ChuModInfo* info, const ChuModAPI* api) {
     g_api = api;
-    api->log("game: %s @ 0x%08X (size 0x%X)",
-             info->game_module, info->game_base, info->game_size);
-    api->log(".text @ 0x%08X (size 0x%X)", info->text_base, info->text_size);
+    api->log_info("C++ mod initialized");
+    api->log("game base=0x%08X text=0x%08X size=0x%X version=%s",
+             (unsigned)info->game_base,
+             (unsigned)info->text_base,
+             info->text_size,
+             info->game_version ? info->game_version : "");
+
+    if (api->toml_section_exists && api->toml_section_exists("config")) {
+        int enabled = api->toml_get_bool("config", "enabled", 1);
+        if (!enabled) return 1;
+    }
+
     return 0;
+}
+
+CHUMOD_API void chumod_on_ready() {
+    if (g_api) g_api->log_info("All mods are ready");
 }
 
 CHUMOD_API void chumod_shutdown() {
-    if (g_api) g_api->log("bye");
+    if (g_api) g_api->log_info("C++ mod shutdown");
 }
 ```
 
-### 生命周期
+## TOML 配置
 
-```
-LoadLibrary(mod.dll)
-  → DllMain(DLL_PROCESS_ATTACH)
-  → chumod_name()           [可选，用于日志显示]
-  → chumod_init(info, api)  [可选，返回 0 = 成功]
-       ↓
-    （游戏运行中）
-       ↓
-   → chumod_shutdown()       [可选，清理资源]
-   → DllMain(DLL_PROCESS_DETACH)
-   → FreeLibrary
+ChuModLoader v2.5 可从以下路径读取单 Mod TOML 文件：
+
+```text
+mods/config/<mod_name>.toml
 ```
 
-如果 `chumod_init` 返回非零值，loader 会立即卸载该 mod。
+示例：
 
-## 使用 API
+```toml
+[config]
+enabled = true
+profile = "default"
 
-`chumod_init` 的 `ChuModAPI*` 参数是工具函数表，全局保存即可。
-
-### 特征码扫描
-
-#### Rust
-
-```rust
-use std::ffi::CString;
-
-unsafe fn find_pattern(api: &ChuModAPI, base: usize, size: u32, pattern: &[u8], mask: &str) -> Option<usize> {
-    let mask_cstr = CString::new(mask).unwrap();
-    if let Some(aob_scan) = api.aob_scan {
-        let addr = aob_scan(base, size, pattern.as_ptr(), mask_cstr.as_ptr());
-        if addr != 0 { Some(addr) } else { None }
-    } else {
-        None
-    }
-}
+[graphics]
+target_fps = 120
+scale = 1.25
+show_overlay = false
 ```
 
-#### C/C++
+使用 TOML API 读取结构化配置：
 
 ```c
-const uint8_t sig[] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC };
-uintptr_t addr = g_api->aob_scan(info->text_base, info->text_size, sig, "xxxxx");
-if (addr) {
-    g_api->log("found at 0x%08X", addr);
-}
+int fps = api->toml_get_int("graphics", "target_fps", 60);
+float scale = api->toml_get_float("graphics", "scale", 1.0f);
+int overlay = api->toml_get_bool("graphics", "show_overlay", 0);
+
+char profile[64];
+api->toml_get_string("config", "profile", profile, sizeof(profile), "default");
 ```
 
-### 内存读写
+旧 INI API 仍使用 `mods/config/<mod_name>.ini` 和 `[config]` section：
 
-#### Rust
-
-```rust
-unsafe fn read_memory<T>(api: &ChuModAPI, addr: usize) -> T {
-    let mut value: T = std::mem::zeroed();
-    if let Some(mem_read) = api.mem_read {
-        mem_read(addr, &mut value as *mut _ as *mut c_void, std::mem::size_of::<T>() as u32);
-    }
-    value
-}
-
-unsafe fn write_memory<T>(api: &ChuModAPI, addr: usize, value: &T) {
-    if let Some(mem_write) = api.mem_write {
-        mem_write(addr, value as *const _ as *const c_void, std::mem::size_of::<T>() as u32);
-    }
-}
-
-unsafe fn fill_memory(api: &ChuModAPI, addr: usize, value: u8, len: u32) {
-    if let Some(mem_fill) = api.mem_fill {
-        mem_fill(addr, value, len);
-    }
-}
+```ini
+[config]
+enabled=true
+target_fps=120
 ```
 
-#### C/C++
+如果 TOML 文件存在，v2.5 会为 TOML getter 加载它。INI setter 仍写入 INI 文件。
+
+## `manifest.toml` 格式
+
+单 Mod manifest 位于：
+
+```text
+mods/manifest/<mod_name>.toml
+```
+
+推荐格式：
+
+```toml
+[mod]
+name = "Example Mod"
+version = "1.0.0"
+author = "Example Team"
+min_loader_version = "2.5.0"
+depends = ["CoreMod", "SharedUi"]
+
+[description]
+en = "Example gameplay enhancement."
+zh_cn = "示例玩法增强。"
+```
+
+C ABI metadata 导出仍是运行时加载的权威来源。Manifest 更适合工具、启动器和人工打包说明。Mod 可查询自己的 manifest 路径：
 
 ```c
-uint32_t value;
-g_api->mem_read(0x12345678, &value, sizeof(value));
-
-uint8_t nop = 0x90;
-g_api->mem_write(0x12345678, &nop, 1);
-
-g_api->mem_fill(0x12345678, 0x90, 5);  // NOP 5 字节
+const char* path = api->get_manifest_path ? api->get_manifest_path() : NULL;
+if (path) api->log_info(path);
 ```
 
-页保护自动处理。
+## 依赖声明
 
-### Hook
-
-#### Rust
-
-```rust
-type OrigFunc = unsafe extern "C" fn(i32, i32) -> i32;
-static mut ORIG: Option<OrigFunc> = None;
-
-unsafe extern "C" fn my_hook(a: i32, b: i32) -> i32 {
-    if let Some(api) = G_API {
-        if let Some(log) = api.log {
-            log("hook called\0".as_ptr() as *const c_char);
-        }
-    }
-    ORIG.unwrap()(a, b)
-}
-
-unsafe fn install_hook(api: &ChuModAPI, target: *mut c_void) {
-    let mut orig_ptr: *mut c_void = std::ptr::null_mut();
-    if let Some(hook_create) = api.hook_create {
-        hook_create(target, my_hook as *mut c_void, &mut orig_ptr);
-        ORIG = Some(std::mem::transmute(orig_ptr));
-    }
-    if let Some(hook_enable) = api.hook_enable {
-        hook_enable(target);
-    }
-}
-```
-
-#### C/C++
+导出 `chumod_depends` 可请求加载顺序。返回依赖名的逗号分隔列表，通常使用显示名或文件 stem。
 
 ```c
-typedef int (__stdcall *OrigFunc_t)(int a, int b);
-static OrigFunc_t orig = NULL;
-
-int __stdcall my_hook(int a, int b) {
-    g_api->log("called with %d, %d", a, b);
-    return orig(a, b);
-}
-
-// 在 chumod_init 中:
-g_api->hook_create((void*)target_addr, (void*)my_hook, (void**)&orig);
-g_api->hook_enable((void*)target_addr);
-
-// 卸载:
-g_api->hook_disable((void*)target_addr);
-g_api->hook_remove((void*)target_addr);
-```
-
-### Mod 间通信
-
-**服务** — 注册命名指针，其他 mod 按名字查找：
-
-#### Rust
-
-```rust
-#[repr(C)]
-pub struct MyService {
-    pub version: i32,
-    pub do_thing: unsafe extern "C" fn(),
-}
-
-unsafe fn register_my_service(api: &ChuModAPI) {
-    static mut SVC: MyService = MyService {
-        version: 1,
-        do_thing: my_func,
-    };
-    if let Some(register_service) = api.register_service {
-        let name = CString::new("my_service").unwrap();
-        register_service(name.as_ptr(), &mut SVC as *mut _ as *mut c_void);
-    }
-}
-
-unsafe fn use_service(api: &ChuModAPI) {
-    if let Some(get_service) = api.get_service {
-        let name = CString::new("my_service").unwrap();
-        let ptr = get_service(name.as_ptr());
-        if !ptr.is_null() {
-            let svc = &*(ptr as *const MyService);
-            svc.do_thing();
-        }
-    }
+CHUMOD_API const char* chumod_depends() {
+    return "CoreMod,SharedUi";
 }
 ```
 
-#### C/C++
+Loader 会在调用 `chumod_init` 前排序 Mod。如果依赖无法满足，Loader 会记录问题并以尽力顺序继续。
+
+## 崩溃保护
+
+ChuModLoader 使用 Rust `catch_unwind` 包裹 `chumod_init`、`chumod_on_ready` 和 `chumod_shutdown`。这能防止 Rust panic 跨越 Loader 边界，但**不能**保证任意内存错误安全：native 代码中的访问冲突仍可能导致进程崩溃。
+
+建议：
+
+- patch 前验证地址。
+- 在 `chumod_shutdown` 中禁用 hook。
+- 导出回调保持短小、确定。
+- 不要让 C++ 异常跨越 C ABI 边界。
+
+## 分级日志
+
+v2.5 新增普通分级日志：
 
 ```c
-// Mod A: 注册
-struct MyService { int version; void (*do_thing)(void); };
-static struct MyService svc = { 1, my_func };
-g_api->register_service("my_service", &svc);
-
-// Mod B: 使用
-struct MyService* s = (struct MyService*)g_api->get_service("my_service");
-if (s) s->do_thing();
+api->log_info("normal status");
+api->log_warn("recoverable problem");
+api->log_error("operation failed");
 ```
 
-**消息** — 发布/订阅：
+需要格式化时可用 `api->log`，但跨语言 Mod 优先使用普通日志 API。在 `chumod_init` 期间，`api->log_path` 指向 `mods/log/` 下的当前 Mod 日志路径。
 
-#### Rust
+## Dual Mode
 
-```rust
-type TopicCallback = unsafe extern "C" fn(*const c_char, *const c_void, u32);
+`CHUMOD_DUAL_MODE(init_func)` 让一个 DLL 同时支持 ChuModLoader 和独立注入。
 
-unsafe extern "C" fn on_score(topic: *const c_char, data: *const c_void, size: u32) {
-    let score = *(data as *const i32);
-    // 处理分数
-}
-
-unsafe fn subscribe_to_topic(api: &ChuModAPI) {
-    if let Some(subscribe) = api.subscribe {
-        let topic = CString::new("score_update").unwrap();
-        subscribe(topic.as_ptr(), on_score as *mut c_void);
-    }
-}
-
-unsafe fn publish_score(api: &ChuModAPI, score: i32) {
-    if let Some(publish) = api.publish {
-        let topic = CString::new("score_update").unwrap();
-        publish(topic.as_ptr(), &score as *const _ as *const c_void, 4);
-    }
-}
-```
-
-#### C/C++
-
-```c
-// 订阅
-void on_score(const char* topic, void* data, uint32_t size) {
-    int score = *(int*)data;
-}
-g_api->subscribe("score_update", on_score);
-
-// 发布
-int score = 1010000;
-g_api->publish("score_update", &score, sizeof(score));
-```
-
-## 双模式（Loader + inject -k）
-
-同时兼容 loader 加载和 `inject -k` 注入：
-
-```c
-#include "chumod.h"
-
+```cpp
 static int my_init(const ChuModInfo* info, const ChuModAPI* api) {
-    // 初始化代码
+    if (api && api->log_info) api->log_info("init");
     return 0;
 }
 
-CHUMOD_DUAL_MODE(my_init)
+CHUMOD_DUAL_MODE(my_init);
 
-BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
+BOOL APIENTRY DllMain(HMODULE, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
-        DisableThreadLibraryCalls(h);
         CHUMOD_DUAL_MODE_START();
     }
     return TRUE;
 }
 ```
 
-Loader 加载时走 `chumod_init`；`inject -k` 注入时后备线程等 3 秒后调 init，此时 `ChuModInfo` 只有基础字段。
+独立模式下，兜底 `ChuModAPI` 通常只有 `struct_size`；大多数函数指针为 `NULL`。调用前必须检查。
 
-> 独立模式下 `ChuModAPI` 所有函数指针为 NULL，调用前检查。
+## 最低 Loader 版本
 
-## 依赖
-
-声明依赖，loader 保证加载顺序：
+如果 Mod 需要某个 Loader 版本新增的 API，导出 `chumod_min_loader_version`。
 
 ```c
-CHUMOD_API const char* chumod_depends() {
-    return "base_mod,utility_mod";
+CHUMOD_API const char* chumod_min_loader_version() {
+    return "2.5.0";
 }
 ```
 
-Loader 会保证那些 mod 在你之前加载。
-
-> 依赖通过文件名或 `chumod_name()` 返回值匹配。
-
-## 构建配置
-
-### Rust（推荐）
-
-Cargo.toml：
-
-```toml
-[package]
-name = "my-mod"
-version = "0.1.0"
-edition = "2021"
-
-[lib]
-crate-type = ["cdylib"]
-```
-
-按需添加 `windows-sys` 依赖（如需要 Win32 API）：
-
-```toml
-[dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
-```
-
-.cargo/config.toml：
-
-```toml
-[build]
-target = "i686-pc-windows-msvc"
-```
-
-构建命令：
-
-```bash
-cargo build --release
-```
-
-产物：`target/i686-pc-windows-msvc/release/my_mod.dll`
-
-### C/C++（传统）
-
-CMakeLists.txt 示例：
-
-```cmake
-cmake_minimum_required(VERSION 3.15)
-project(my_mod LANGUAGES C CXX)
-
-set(CMAKE_CXX_STANDARD 17)
-
-add_library(my_mod SHARED src/main.cpp)
-target_include_directories(my_mod PRIVATE path/to/ChuModLoader/include)
-
-set_target_properties(my_mod PROPERTIES
-    OUTPUT_NAME "my_mod"
-    SUFFIX ".dll"
-)
-```
-
-用 `-A Win32` 构建（游戏 32 位）：
-
-```bash
-cmake -B build -A Win32
-cmake --build build --config Release
-```
-
-编译产物复制到 `mods/`。
-
-## 注意事项
-
-- **Rust mod**：必须指定 `crate-type = ["cdylib"]`，目标平台为 `i686-pc-windows-msvc`
-- **C/C++ mod**：必须 `-A Win32`，游戏是 32 位
-- 不要阻塞 `DllMain`，耗时操作放 `chumod_init` 或新线程
-- 用 AOB 扫描而不是硬编码地址，游戏更新会变
-- `chumod_shutdown` 里清理所有 hook 和资源
-- 双模式下 API 指针可能为 NULL
-
-## 参考
-
-- [API 参考](api-reference_cn.md)
-- [chumod.h](../include/chumod.h)
+面向未知 Loader 版本用户分发二进制时，也要通过 `struct_size` 和空指针检查保护单个字段。

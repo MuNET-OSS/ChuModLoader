@@ -1,343 +1,482 @@
-# API Reference
+# ChuModLoader API Reference (v2.5.0)
 
-`chumod.h` — ChuModLoader Mod API v1.0.0. The loader is written in Rust, and mods can be written in Rust, C/C++, or any language that produces a Win32 DLL.
+This document describes the C ABI exposed by ChuModLoader v2.5.0. The ABI is intentionally append-only: older mods continue to work, and newer mods should check `ChuModAPI::struct_size` before using fields added after their target version.
+
+For C/C++ projects, include `include/chumod.h`. Rust or other languages should mirror the same `#[repr(C)]` layouts and `extern "C"` function signatures.
 
 ## Constants
 
-| Name | Value | Description |
-|------|-------|-------------|
-| `CHUMOD_API_VERSION` | `1` | Current API version |
-| `CHUMOD_API` | `__declspec(dllexport)` | Export marker for mod functions |
-
-## ChuModInfo
-
-Passed to `chumod_init`. Game process information.
-
-Rust equivalent:
-
-```rust
-#[repr(C)]
-pub struct ChuModInfo {
-    pub api_version: u32,
-    pub loader_version: *const c_char,
-    pub game_module: *const c_char,
-    pub game_base: usize,
-    pub game_size: u32,
-    pub text_base: usize,
-    pub text_size: u32,
-}
+```c
+#define CHUMOD_API __declspec(dllexport)
+#define CHUMOD_API_VERSION 3
 ```
+
+- `CHUMOD_API` marks functions exported by a mod DLL.
+- `CHUMOD_API_VERSION` is the loader ABI version reported in `ChuModInfo::api_version`.
+
+## `ChuModInfo`
+
+Runtime information passed to `chumod_init`.
 
 ```c
 typedef struct {
-    uint32_t    api_version;     // CHUMOD_API_VERSION
-    const char* loader_version;  // e.g. "1.0.0", or "standalone" in dual mode
-    const char* game_module;     // "chusanApp.exe"
-    uintptr_t   game_base;       // Base address of game module
-    uint32_t    game_size;       // SizeOfImage from PE header
-    uintptr_t   text_base;       // .text section start
-    uint32_t    text_size;       // .text section size
+    uint32_t api_version;
+    const char* loader_version;
+    const char* game_module;
+    uintptr_t game_base;
+    uint32_t game_size;
+    uintptr_t text_base;
+    uint32_t text_size;
+    uintptr_t rdata_base;
+    uint32_t rdata_size;
+    const char* game_version;
 } ChuModInfo;
 ```
 
-`text_base` and `text_size` are useful for limiting AOB scans to executable code.
+| Field | Description |
+| --- | --- |
+| `api_version` | Loader ABI version. v2.5.0 reports `CHUMOD_API_VERSION` (`3`). |
+| `loader_version` | Loader package version string, e.g. `"2.5.0"`. |
+| `game_module` | Game executable module name, usually `"chusanApp.exe"`; may be `NULL`. |
+| `game_base` | Base address of the game image, or `0` if the module was not found. |
+| `game_size` | Size of the game image in bytes. |
+| `text_base` | Base address of the game `.text` section. |
+| `text_size` | Virtual size of the `.text` section in bytes. |
+| `rdata_base` | Base address of the game `.rdata` section. |
+| `rdata_size` | Virtual size of the `.rdata` section in bytes. |
+| `game_version` | FileVersion/ProductVersion read from the game PE resources; empty string if unavailable. |
 
-## ChuModAPI
+## `ChuModAPI`
 
-Function table from `chumod_init`. Store globally.
+Function table provided to mods. The loader sets `struct_size = sizeof(ChuModAPI)` for its build.
 
-Rust equivalent:
+```c
+typedef struct {
+    uint32_t struct_size;
 
-```rust
-#[repr(C)]
-pub struct ChuModAPI {
-    pub struct_size: u32,
-    pub log: Option<unsafe extern "C" fn(*const c_char, ...)>,
-    pub aob_scan: Option<unsafe extern "C" fn(usize, u32, *const u8, *const c_char) -> usize>,
-    pub mem_read: Option<unsafe extern "C" fn(usize, *mut c_void, u32) -> i32>,
-    pub mem_write: Option<unsafe extern "C" fn(usize, *const c_void, u32) -> i32>,
-    pub mem_fill: Option<unsafe extern "C" fn(usize, u8, u32) -> i32>,
-    pub hook_create: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut *mut c_void) -> i32>,
-    pub hook_enable: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
-    pub hook_disable: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
-    pub hook_remove: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
-    pub register_service: Option<unsafe extern "C" fn(*const c_char, *mut c_void) -> i32>,
-    pub get_service: Option<unsafe extern "C" fn(*const c_char) -> *mut c_void>,
-    pub publish: Option<unsafe extern "C" fn(*const c_char, *mut c_void, u32) -> i32>,
-    pub subscribe: Option<unsafe extern "C" fn(*const c_char, Option<unsafe extern "C" fn(*const c_char, *mut c_void, u32)>) -> i32>,
+    /* v1 */
+    ChuModLogFunc log;
+    ChuModAobScanFunc aob_scan;
+    ChuModMemReadFunc mem_read;
+    ChuModMemWriteFunc mem_write;
+    ChuModMemFillFunc mem_fill;
+    ChuModHookCreateFunc hook_create;
+    ChuModHookEnableFunc hook_enable;
+    ChuModHookDisableFunc hook_disable;
+    ChuModHookRemoveFunc hook_remove;
+    ChuModRegisterServiceFunc register_service;
+    ChuModGetServiceFunc get_service;
+    ChuModPublishFunc publish;
+    ChuModSubscribeFunc subscribe;
+
+    /* v2 */
+    ChuModRttiFindVtableFunc rtti_find_vtable;
+    ChuModConfigGetIntFunc config_get_int;
+    ChuModConfigGetFloatFunc config_get_float;
+    ChuModConfigGetBoolFunc config_get_bool;
+    ChuModConfigGetStringFunc config_get_string;
+    ChuModConfigSetIntFunc config_set_int;
+    ChuModConfigSetFloatFunc config_set_float;
+    ChuModConfigSetBoolFunc config_set_bool;
+    ChuModConfigSetStringFunc config_set_string;
+
+    /* v2.5 */
+    ChuModLogPlainFunc log_info;
+    ChuModLogPlainFunc log_warn;
+    ChuModLogPlainFunc log_error;
+    const char* log_path;
+    ChuModTomlSectionExistsFunc toml_section_exists;
+    ChuModTomlGetBoolFunc toml_get_bool;
+    ChuModTomlGetIntFunc toml_get_int;
+    ChuModTomlGetFloatFunc toml_get_float;
+    ChuModTomlGetStringFunc toml_get_string;
+    ChuModGetManifestPathFunc get_manifest_path;
+} ChuModAPI;
+```
+
+### Compatibility check
+
+```c
+#include <stddef.h>
+
+if (api->struct_size >= offsetof(ChuModAPI, log_info) + sizeof(api->log_info) && api->log_info) {
+    api->log_info("v2.5 logging is available");
 }
 ```
 
-Return values: `0` on success, non-zero on failure (unless noted).
-
----
-
-### Rust Types
-
-Full Rust struct definitions for `std::ffi` compatibility:
-
-```rust
-use std::ffi::{c_char, c_void};
-
-#[repr(C)]
-pub struct ChuModInfo {
-    pub api_version: u32,
-    pub loader_version: *const c_char,
-    pub game_module: *const c_char,
-    pub game_base: usize,
-    pub game_size: u32,
-    pub text_base: usize,
-    pub text_size: u32,
-}
-
-#[repr(C)]
-pub struct ChuModAPI {
-    pub struct_size: u32,
-    pub log: Option<unsafe extern "C" fn(*const c_char, ...)>,
-    pub aob_scan: Option<unsafe extern "C" fn(usize, u32, *const u8, *const c_char) -> usize>,
-    pub mem_read: Option<unsafe extern "C" fn(usize, *mut c_void, u32) -> i32>,
-    pub mem_write: Option<unsafe extern "C" fn(usize, *const c_void, u32) -> i32>,
-    pub mem_fill: Option<unsafe extern "C" fn(usize, u8, u32) -> i32>,
-    pub hook_create: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut *mut c_void) -> i32>,
-    pub hook_enable: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
-    pub hook_disable: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
-    pub hook_remove: Option<unsafe extern "C" fn(*mut c_void) -> i32>,
-    pub register_service: Option<unsafe extern "C" fn(*const c_char, *mut c_void) -> i32>,
-    pub get_service: Option<unsafe extern "C" fn(*const c_char) -> *mut c_void>,
-    pub publish: Option<unsafe extern "C" fn(*const c_char, *mut c_void, u32) -> i32>,
-    pub subscribe: Option<unsafe extern "C" fn(*const c_char, Option<unsafe extern "C" fn(*const c_char, *mut c_void, u32)>) -> i32>,
-}
-```
-
----
+## v1 API
 
 ### Logging
 
-#### `log(const char* fmt, ...)`
-
-Printf-style logging. Output to `chusan_loader.log` and console.
-
 ```c
-api->log("player score: %d", score);
-api->log("hook target: 0x%08X", addr);
+typedef void (*ChuModLogFunc)(const char* fmt, ...);
+void log(const char* fmt, ...);
 ```
 
-> `log` is NULL in dual-mode standalone fallback.
+Writes a formatted message to `chusan_loader.log` and the console if attached.
 
----
+Parameters:
+- `fmt`: `printf`-style format string.
+- `...`: values referenced by `fmt`.
 
-### Memory — Pattern Scanning
+Return value: none.
 
-#### `aob_scan(uintptr_t start, uint32_t size, const uint8_t* pattern, const char* mask) → uintptr_t`
-
-Scans for a byte pattern. Returns first match address, or `0` if not found.
-
-- `start` — scan start address (typically `info->text_base`)
-- `size` — number of bytes to scan (typically `info->text_size`)
-- `pattern` — byte array to match
-- `mask` — character mask, same length as pattern:
-  - `'x'` — exact match
-  - `'?'` — wildcard
+Example:
 
 ```c
-const uint8_t sig[] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC };
-uintptr_t addr = api->aob_scan(info->text_base, info->text_size, sig, "xxxxx");
+api->log("%s loaded at 0x%08X", "MyMod", (unsigned)info->game_base);
 ```
 
----
-
-### Memory — Read / Write / Fill
-
-Page protection handled automatically (`VirtualProtect`).
-
-#### `mem_read(uintptr_t addr, void* buf, uint32_t size) → int`
+### AOB scan
 
 ```c
-uint32_t value;
-api->mem_read(target, &value, sizeof(value));
+typedef uintptr_t (*ChuModAobScanFunc)(
+    uintptr_t start,
+    uint32_t size,
+    const uint8_t* pattern,
+    const char* mask
+);
+uintptr_t aob_scan(uintptr_t start, uint32_t size, const uint8_t* pattern, const char* mask);
 ```
 
-#### `mem_write(uintptr_t addr, const void* buf, uint32_t size) → int`
+Scans memory for a byte pattern. In `mask`, `x` means exact match and `?` means wildcard.
+
+Parameters:
+- `start`: start address.
+- `size`: bytes to scan.
+- `pattern`: byte pattern.
+- `mask`: mask string with the same length as `pattern`.
+
+Return value: matched address, or `0` if not found or arguments are invalid.
+
+Example:
 
 ```c
-uint8_t jmp = 0xEB;
-api->mem_write(branch_addr, &jmp, 1);
+uint8_t pat[] = { 0x8B, 0x45, 0x00, 0x89 };
+uintptr_t addr = api->aob_scan(info->text_base, info->text_size, pat, "xx?x");
 ```
 
-#### `mem_fill(uintptr_t addr, uint8_t value, uint32_t size) → int`
+### Memory access
 
 ```c
-api->mem_fill(call_addr, 0x90, 5);
+typedef int (*ChuModMemReadFunc)(uintptr_t addr, void* buf, uint32_t size);
+typedef int (*ChuModMemWriteFunc)(uintptr_t addr, const void* buf, uint32_t size);
+typedef int (*ChuModMemFillFunc)(uintptr_t addr, uint8_t value, uint32_t size);
+
+int mem_read(uintptr_t addr, void* buf, uint32_t size);
+int mem_write(uintptr_t addr, const void* buf, uint32_t size);
+int mem_fill(uintptr_t addr, uint8_t value, uint32_t size);
 ```
 
----
+Reads, writes, or fills process memory. The loader temporarily adjusts page protection where needed.
 
-### Hooking
+Parameters:
+- `addr`: target address.
+- `buf`: source/destination buffer for read/write.
+- `value`: byte used by `mem_fill`.
+- `size`: number of bytes.
 
-Based on [retour](https://crates.io/crates/retour). Call `hook_enable` after `hook_create`.
+Return value: `0` on success, non-zero on failure.
 
-#### `hook_create(void* target, void* detour, void** original) → int`
-
-#### `hook_enable(void* target) → int`
-
-#### `hook_disable(void* target) → int`
-
-#### `hook_remove(void* target) → int`
-
-**Full example:**
+Example:
 
 ```c
-typedef int (__stdcall *CheckFunc_t)(void* self);
-static CheckFunc_t orig_check = NULL;
+uint8_t nop = 0x90;
+api->mem_write(address, &nop, 1);
+api->mem_fill(address + 1, 0x90, 5);
+```
 
-int __stdcall hook_check(void* self) {
-    return orig_check(self);
+### Inline hooks
+
+```c
+typedef int (*ChuModHookCreateFunc)(void* target, void* detour, void** original);
+typedef int (*ChuModHookEnableFunc)(void* target);
+typedef int (*ChuModHookDisableFunc)(void* target);
+typedef int (*ChuModHookRemoveFunc)(void* target);
+
+int hook_create(void* target, void* detour, void** original);
+int hook_enable(void* target);
+int hook_disable(void* target);
+int hook_remove(void* target);
+```
+
+Creates and controls inline hooks. `original` receives a trampoline pointer when provided.
+
+Parameters:
+- `target`: function address to hook.
+- `detour`: replacement function.
+- `original`: optional out-parameter for trampoline.
+
+Return value: `0` on success, non-zero on failure.
+
+Example:
+
+```c
+typedef int (__stdcall *TargetFn)(int);
+static TargetFn real_target = NULL;
+
+int __stdcall my_target(int value) {
+    return real_target(value + 1);
 }
 
-api->hook_create((void*)target, (void*)hook_check, (void**)&orig_check);
-api->hook_enable((void*)target);
-
-// cleanup
-api->hook_disable((void*)target);
-api->hook_remove((void*)target);
+api->hook_create((void*)target_addr, (void*)my_target, (void**)&real_target);
+api->hook_enable((void*)target_addr);
 ```
 
----
-
-### Inter-Mod Communication — Services
-
-Named pointer registry. Thread-safe.
-
-#### `register_service(const char* name, void* service_ptr) → int`
-
-#### `get_service(const char* name) → void*`
-
-Returns registered pointer, or `NULL` if not found.
-
-**Example:**
+### Inter-mod IPC
 
 ```c
-// --- provider mod ---
-struct ScoreService {
-    int version;
-    int (*get_score)(void);
-};
+typedef int (*ChuModRegisterServiceFunc)(const char* name, void* service_ptr);
+typedef void* (*ChuModGetServiceFunc)(const char* name);
+typedef void (*ChuModMessageCallback)(const char* topic, void* data, uint32_t size);
+typedef int (*ChuModPublishFunc)(const char* topic, void* data, uint32_t size);
+typedef int (*ChuModSubscribeFunc)(const char* topic, ChuModMessageCallback callback);
 
-static struct ScoreService svc = { 1, my_get_score };
-api->register_service("score_service", &svc);
+int register_service(const char* name, void* service_ptr);
+void* get_service(const char* name);
+int publish(const char* topic, void* data, uint32_t size);
+int subscribe(const char* topic, ChuModMessageCallback callback);
+```
 
-// --- consumer mod ---
-struct ScoreService* s = (struct ScoreService*)api->get_service("score_service");
-if (s && s->version >= 1) {
-    int score = s->get_score();
+Provides simple service lookup and topic-based messaging between loaded mods.
+
+Return values:
+- `register_service`, `publish`, `subscribe`: `0` on success.
+- `get_service`: registered pointer, or `NULL` if missing.
+
+Example:
+
+```c
+static void on_msg(const char* topic, void* data, uint32_t size) {
+    (void)topic;
+    (void)data;
+    (void)size;
+}
+
+api->register_service("example.counter", &counter_service);
+api->subscribe("example.ready", on_msg);
+api->publish("example.ready", NULL, 0);
+```
+
+## v2 API
+
+### RTTI helper
+
+```c
+typedef uintptr_t (*ChuModRttiFindVtableFunc)(const char* rtti_class_name);
+uintptr_t rtti_find_vtable(const char* rtti_class_name);
+```
+
+Finds an MSVC RTTI vtable by class name inside the game image.
+
+Parameters:
+- `rtti_class_name`: decorated or plain class name to search for.
+
+Return value: vtable address, or `0` if not found.
+
+Example:
+
+```c
+uintptr_t vt = api->rtti_find_vtable("SomeGameClass");
+```
+
+### INI configuration
+
+```c
+int config_get_int(const char* key, int default_val);
+float config_get_float(const char* key, float default_val);
+int config_get_bool(const char* key, int default_val);
+int config_get_string(const char* key, char* buf, uint32_t buf_size, const char* default_val);
+int config_set_int(const char* key, int value);
+int config_set_float(const char* key, float value);
+int config_set_bool(const char* key, int value);
+int config_set_string(const char* key, const char* value);
+```
+
+Reads and writes per-mod INI configuration under `mods/config/<mod_name>.ini`, using the `[config]` section.
+
+Return values:
+- Getters return the parsed value or the default.
+- `config_get_string` writes into `buf` and returns written length.
+- Setters return `0` on success.
+
+Example:
+
+```c
+int enabled = api->config_get_bool("enabled", 1);
+char name[64];
+api->config_get_string("profile", name, sizeof(name), "default");
+api->config_set_int("launch_count", 42);
+```
+
+## v2.5 API
+
+### Leveled logging
+
+```c
+typedef void (*ChuModLogPlainFunc)(const char* message);
+void log_info(const char* message);
+void log_warn(const char* message);
+void log_error(const char* message);
+```
+
+Writes plain text at INFO/WARN/ERROR levels. These are safer than variadic logging when crossing languages.
+
+Parameters:
+- `message`: null-terminated UTF-8/ANSI text.
+
+Return value: none.
+
+Example:
+
+```c
+api->log_info("configuration loaded");
+api->log_warn("optional pattern not found");
+api->log_error("required hook failed");
+```
+
+### Per-mod log path
+
+```c
+const char* log_path;
+```
+
+Path to the current mod log file, usually `mods/log/<mod_name>.log`. It may be `NULL` when unavailable.
+
+Example:
+
+```c
+if (api->log_path) {
+    api->log_info(api->log_path);
 }
 ```
 
-> Use `chumod_depends` to ensure load order when depending on another mod's service.
-
----
-
-### Inter-Mod Communication — Messages
-
-Publish/subscribe message bus. Synchronous dispatch, thread-safe registration.
-
-#### `publish(const char* topic, void* data, uint32_t size) → int`
-
-Sends data to all subscribers of `topic` synchronously.
-
-#### `subscribe(const char* topic, ChuModMessageCallback callback) → int`
-
-**Callback:**
+### TOML configuration
 
 ```c
-void callback(const char* topic, void* data, uint32_t size);
+int toml_section_exists(const char* section);
+int toml_get_bool(const char* section, const char* key, int default_val);
+int toml_get_int(const char* section, const char* key, int default_val);
+float toml_get_float(const char* section, const char* key, float default_val);
+int toml_get_string(const char* section, const char* key, char* buf, uint32_t buf_size, const char* default_val);
 ```
 
-**Example:**
+Reads per-mod TOML configuration from `mods/config/<mod_name>.toml`. If the TOML file does not exist, the loader falls back to the INI path for legacy config APIs.
+
+Parameters:
+- `section`: TOML table name, for example `"config"`, `"graphics"`, or `"features"`.
+- `key`: key inside the table.
+- `default_val`: value returned when the section/key is missing or invalid.
+- `buf` / `buf_size`: destination buffer for strings.
+
+Return values:
+- `toml_section_exists`: `1` if the table exists, otherwise `0`.
+- Other getters return parsed value or the default.
+- `toml_get_string` returns written length.
+
+Example:
 
 ```c
-// subscriber
-void on_event(const char* topic, void* data, uint32_t size) {
-    int value = *(int*)data;
-    api->log("received %s: %d", topic, value);
-}
-api->subscribe("game_event", on_event);
-
-// publisher
-int payload = 42;
-api->publish("game_event", &payload, sizeof(payload));
-```
-
----
-
-## Mod Export Functions
-
-All optional. Loader checks via `GetProcAddress`.
-
-### `chumod_name() → const char*`
-
-Display name for log output. Falls back to DLL filename.
-
-### `chumod_init(const ChuModInfo* info, const ChuModAPI* api) → int`
-
-Init entry point. Return `0` for success, non-zero to unload.
-
-### `chumod_shutdown()`
-
-Cleanup on exit. Called in reverse load order.
-
-### `chumod_depends() → const char*`
-
-Comma-separated dependency list. Loader ensures they load first.
-
-```c
-CHUMOD_API const char* chumod_depends() {
-    return "base_mod,utility_mod";
+if (api->toml_section_exists("graphics")) {
+    int fps = api->toml_get_int("graphics", "target_fps", 60);
+    float scale = api->toml_get_float("graphics", "scale", 1.0f);
+    char preset[32];
+    api->toml_get_string("graphics", "preset", preset, sizeof(preset), "default");
 }
 ```
 
----
-
-## Dual Mode Macros
-
-For mods that work with both loader and `inject -k`.
-
-### `CHUMOD_DUAL_MODE(init_func)`
-
-Generates `chumod_init` export and fallback thread. In standalone injection, waits 3s then calls `init_func` with `ChuModAPI` fields all NULL.
-
-### `CHUMOD_DUAL_MODE_START()`
-
-Call in `DllMain` `DLL_PROCESS_ATTACH`.
+### Manifest path
 
 ```c
-#include "chumod.h"
+typedef const char* (*ChuModGetManifestPathFunc)(void);
+const char* get_manifest_path(void);
+```
 
-static int my_init(const ChuModInfo* info, const ChuModAPI* api) {
-    if (api->log) api->log("hello");  // check NULL in dual mode
+Returns the current mod manifest path (`mods/manifest/<mod_name>.toml`) or `NULL` if no manifest exists.
+
+Example:
+
+```c
+const char* manifest = api->get_manifest_path ? api->get_manifest_path() : NULL;
+if (manifest) {
+    api->log_info(manifest);
+}
+```
+
+## Mod exports
+
+All exports are optional except that mods needing the API should export `chumod_init`. Plain DLLs with only `DllMain` are still loaded.
+
+```c
+CHUMOD_API int chumod_init(const ChuModInfo* info, const ChuModAPI* api);
+CHUMOD_API void chumod_shutdown(void);
+CHUMOD_API const char* chumod_name(void);
+CHUMOD_API const char* chumod_depends(void);
+CHUMOD_API const char* chumod_version(void);
+CHUMOD_API const char* chumod_author(void);
+CHUMOD_API const char* chumod_min_loader_version(void);
+CHUMOD_API void chumod_on_ready(void);
+```
+
+| Export | Loader behavior |
+| --- | --- |
+| `chumod_init` | Called after the DLL is loaded and dependencies are ready. Return `0` to keep the mod loaded; non-zero skips/unloads it. |
+| `chumod_shutdown` | Called during loader unload before `FreeLibrary`. |
+| `chumod_name` | Returns display name used in logs and dependency resolution. |
+| `chumod_depends` | Returns comma-separated dependency names. |
+| `chumod_version` | Returns mod version metadata. |
+| `chumod_author` | Returns mod author metadata. |
+| `chumod_min_loader_version` | Returns minimum required loader version, e.g. `"2.1.0"`. |
+| `chumod_on_ready` | Called after all successful `chumod_init` calls finish. |
+
+Example:
+
+```c
+static const ChuModAPI* g_api = NULL;
+
+CHUMOD_API const char* chumod_name(void) { return "Example Mod"; }
+CHUMOD_API const char* chumod_version(void) { return "1.0.0"; }
+CHUMOD_API const char* chumod_author(void) { return "Example Team"; }
+CHUMOD_API const char* chumod_min_loader_version(void) { return "2.5.0"; }
+CHUMOD_API const char* chumod_depends(void) { return "CoreMod"; }
+
+CHUMOD_API int chumod_init(const ChuModInfo* info, const ChuModAPI* api) {
+    (void)info;
+    g_api = api;
+    g_api->log_info("init");
     return 0;
 }
 
-CHUMOD_DUAL_MODE(my_init)
+CHUMOD_API void chumod_on_ready(void) {
+    g_api->log_info("all mods are ready");
+}
 
-BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
+CHUMOD_API void chumod_shutdown(void) {
+    if (g_api) g_api->log_info("shutdown");
+}
+```
+
+## `CHUMOD_DUAL_MODE`
+
+`CHUMOD_DUAL_MODE(init_func)` helps a mod support both ChuModLoader and standalone injection. Loader mode calls `chumod_init`; standalone mode starts a delayed fallback thread from `DllMain` and calls the same initializer with best-effort game information.
+
+```c
+static int my_init(const ChuModInfo* info, const ChuModAPI* api) {
+    (void)info;
+    if (api && api->log_info) api->log_info("dual mode init");
+    return 0;
+}
+
+CHUMOD_DUAL_MODE(my_init);
+
+BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
+    (void)module;
+    (void)reserved;
     if (reason == DLL_PROCESS_ATTACH) {
-        DisableThreadLibraryCalls(h);
         CHUMOD_DUAL_MODE_START();
     }
     return TRUE;
 }
 ```
 
----
-
-## Symbol Names
-
-For manual `GetProcAddress` or DEF files:
-
-| Export | String Constant |
-|--------|----------------|
-| `chumod_init` | `CHUMOD_INIT_NAME` |
-| `chumod_shutdown` | `CHUMOD_SHUTDOWN_NAME` |
-| `chumod_name` | `CHUMOD_NAME_NAME` |
-| `chumod_depends` | `CHUMOD_DEPENDS_NAME` |
+In standalone fallback, many API function pointers are `NULL`; always check before use.

@@ -1,270 +1,482 @@
-# API 参考
+# ChuModLoader API 参考（v2.5.0）
 
-`chumod.h` — ChuModLoader Mod API v1.0.0
+本文档说明 ChuModLoader v2.5.0 暴露给 Mod 的 C ABI。ABI 采用只追加字段的兼容策略：旧 Mod 可以继续工作，新 Mod 使用较新字段前应检查 `ChuModAPI::struct_size`。
+
+C/C++ 项目请包含 `include/chumod.h`。Rust 或其他语言需要镜像相同的 `#[repr(C)]` 布局和 `extern "C"` 函数签名。
 
 ## 常量
 
-| 名称 | 值 | 说明 |
-|------|------|------|
-| `CHUMOD_API_VERSION` | `1` | 当前 API 版本号 |
-| `CHUMOD_API` | `__declspec(dllexport)` | mod 函数的导出标记 |
+```c
+#define CHUMOD_API __declspec(dllexport)
+#define CHUMOD_API_VERSION 3
+```
 
-## ChuModInfo
+- `CHUMOD_API`：标记 Mod DLL 导出的函数。
+- `CHUMOD_API_VERSION`：Loader ABI 版本，会通过 `ChuModInfo::api_version` 报告。
 
-传给 `chumod_init` 的游戏进程信息。
+## `ChuModInfo`
+
+`chumod_init` 接收的运行时信息。
 
 ```c
 typedef struct {
-    uint32_t    api_version;     // CHUMOD_API_VERSION
-    const char* loader_version;  // 如 "1.0.0"，双模式独立运行时为 "standalone"
-    const char* game_module;     // "chusanApp.exe"
-    uintptr_t   game_base;       // 游戏模块基址
-    uint32_t    game_size;       // PE 头中的 SizeOfImage
-    uintptr_t   text_base;       // .text 段起始地址
-    uint32_t    text_size;       // .text 段大小
+    uint32_t api_version;
+    const char* loader_version;
+    const char* game_module;
+    uintptr_t game_base;
+    uint32_t game_size;
+    uintptr_t text_base;
+    uint32_t text_size;
+    uintptr_t rdata_base;
+    uint32_t rdata_size;
+    const char* game_version;
 } ChuModInfo;
 ```
 
-`text_base` 和 `text_size` 用于限定 AOB 扫描范围到可执行代码区域。
+| 字段 | 说明 |
+| --- | --- |
+| `api_version` | Loader ABI 版本。v2.5.0 为 `CHUMOD_API_VERSION`（`3`）。 |
+| `loader_version` | Loader 包版本字符串，例如 `"2.5.0"`。 |
+| `game_module` | 游戏主程序模块名，通常为 `"chusanApp.exe"`；可能为 `NULL`。 |
+| `game_base` | 游戏镜像基址，找不到模块时为 `0`。 |
+| `game_size` | 游戏镜像大小。 |
+| `text_base` | 游戏 `.text` 节基址。 |
+| `text_size` | `.text` 节虚拟大小。 |
+| `rdata_base` | 游戏 `.rdata` 节基址。 |
+| `rdata_size` | `.rdata` 节虚拟大小。 |
+| `game_version` | 从游戏 PE 资源读取的 FileVersion/ProductVersion；不可用时为空字符串。 |
 
-## ChuModAPI
+## `ChuModAPI`
 
-`chumod_init` 传入的函数表，全局保存使用。
+Loader 提供给 Mod 的函数表。Loader 会设置 `struct_size = sizeof(ChuModAPI)`。
 
-返回值：`0` 成功，非零失败（除特别说明）。
+```c
+typedef struct {
+    uint32_t struct_size;
 
----
+    /* v1 */
+    ChuModLogFunc log;
+    ChuModAobScanFunc aob_scan;
+    ChuModMemReadFunc mem_read;
+    ChuModMemWriteFunc mem_write;
+    ChuModMemFillFunc mem_fill;
+    ChuModHookCreateFunc hook_create;
+    ChuModHookEnableFunc hook_enable;
+    ChuModHookDisableFunc hook_disable;
+    ChuModHookRemoveFunc hook_remove;
+    ChuModRegisterServiceFunc register_service;
+    ChuModGetServiceFunc get_service;
+    ChuModPublishFunc publish;
+    ChuModSubscribeFunc subscribe;
+
+    /* v2 */
+    ChuModRttiFindVtableFunc rtti_find_vtable;
+    ChuModConfigGetIntFunc config_get_int;
+    ChuModConfigGetFloatFunc config_get_float;
+    ChuModConfigGetBoolFunc config_get_bool;
+    ChuModConfigGetStringFunc config_get_string;
+    ChuModConfigSetIntFunc config_set_int;
+    ChuModConfigSetFloatFunc config_set_float;
+    ChuModConfigSetBoolFunc config_set_bool;
+    ChuModConfigSetStringFunc config_set_string;
+
+    /* v2.5 */
+    ChuModLogPlainFunc log_info;
+    ChuModLogPlainFunc log_warn;
+    ChuModLogPlainFunc log_error;
+    const char* log_path;
+    ChuModTomlSectionExistsFunc toml_section_exists;
+    ChuModTomlGetBoolFunc toml_get_bool;
+    ChuModTomlGetIntFunc toml_get_int;
+    ChuModTomlGetFloatFunc toml_get_float;
+    ChuModTomlGetStringFunc toml_get_string;
+    ChuModGetManifestPathFunc get_manifest_path;
+} ChuModAPI;
+```
+
+### 兼容性检查
+
+```c
+#include <stddef.h>
+
+if (api->struct_size >= offsetof(ChuModAPI, log_info) + sizeof(api->log_info) && api->log_info) {
+    api->log_info("v2.5 logging is available");
+}
+```
+
+## v1 API
 
 ### 日志
 
-#### `log(const char* fmt, ...)`
-
-printf 风格日志，输出到 `chusan_loader.log` 和控制台。
-
 ```c
-api->log("player score: %d", score);
-api->log("hook target: 0x%08X", addr);
+typedef void (*ChuModLogFunc)(const char* fmt, ...);
+void log(const char* fmt, ...);
 ```
 
-> 双模式独立运行时 `log` 为 NULL。
+写入格式化日志到 `chusan_loader.log`，并在控制台可用时输出到控制台。
 
----
+参数：
+- `fmt`：`printf` 风格格式串。
+- `...`：格式串引用的值。
 
-### 内存 — 特征码扫描
+返回值：无。
 
-#### `aob_scan(uintptr_t start, uint32_t size, const uint8_t* pattern, const char* mask) → uintptr_t`
-
-扫描字节序列，返回首个匹配地址，未找到返回 `0`。
-
-- `start` — 扫描起始地址（一般用 `info->text_base`）
-- `size` — 扫描的字节数（一般用 `info->text_size`）
-- `pattern` — 要匹配的字节数组
-- `mask` — 字符掩码，长度和 pattern 相同：
-  - `'x'` — 精确匹配
-  - `'?'` — 通配，任何字节都匹配
+示例：
 
 ```c
-// 查找函数开头: push ebp; mov ebp,esp; sub esp,??
-const uint8_t sig[] = { 0x55, 0x8B, 0xEC, 0x83, 0xEC };
-uintptr_t addr = api->aob_scan(info->text_base, info->text_size, sig, "xxxxx");
+api->log("%s loaded at 0x%08X", "MyMod", (unsigned)info->game_base);
 ```
 
----
-
-### 内存 — 读 / 写 / 填充
-
-自动处理页保护（`VirtualProtect`）。
-
-#### `mem_read(uintptr_t addr, void* buf, uint32_t size) → int`
+### AOB 扫描
 
 ```c
-uint32_t value;
-api->mem_read(target, &value, sizeof(value));
+typedef uintptr_t (*ChuModAobScanFunc)(
+    uintptr_t start,
+    uint32_t size,
+    const uint8_t* pattern,
+    const char* mask
+);
+uintptr_t aob_scan(uintptr_t start, uint32_t size, const uint8_t* pattern, const char* mask);
 ```
 
-#### `mem_write(uintptr_t addr, const void* buf, uint32_t size) → int`
+按字节特征扫描内存。`mask` 中 `x` 表示精确匹配，`?` 表示通配。
+
+参数：
+- `start`：起始地址。
+- `size`：扫描字节数。
+- `pattern`：字节模式。
+- `mask`：与 `pattern` 等长的掩码字符串。
+
+返回值：匹配地址；找不到或参数无效时返回 `0`。
+
+示例：
 
 ```c
-// 把条件跳转改成无条件跳转
-uint8_t jmp = 0xEB;
-api->mem_write(branch_addr, &jmp, 1);
+uint8_t pat[] = { 0x8B, 0x45, 0x00, 0x89 };
+uintptr_t addr = api->aob_scan(info->text_base, info->text_size, pat, "xx?x");
 ```
 
-#### `mem_fill(uintptr_t addr, uint8_t value, uint32_t size) → int`
+### 内存访问
 
 ```c
-// NOP 掉一条 5 字节的 CALL 指令
-api->mem_fill(call_addr, 0x90, 5);
+typedef int (*ChuModMemReadFunc)(uintptr_t addr, void* buf, uint32_t size);
+typedef int (*ChuModMemWriteFunc)(uintptr_t addr, const void* buf, uint32_t size);
+typedef int (*ChuModMemFillFunc)(uintptr_t addr, uint8_t value, uint32_t size);
+
+int mem_read(uintptr_t addr, void* buf, uint32_t size);
+int mem_write(uintptr_t addr, const void* buf, uint32_t size);
+int mem_fill(uintptr_t addr, uint8_t value, uint32_t size);
 ```
 
----
+读取、写入或填充进程内存。Loader 会按需临时调整页面保护。
 
-### Hook
+参数：
+- `addr`：目标地址。
+- `buf`：读写缓冲区。
+- `value`：`mem_fill` 使用的填充值。
+- `size`：字节数。
 
-基于 [retour](https://crates.io/crates/retour)。`hook_create` 后需要 `hook_enable` 激活。
+返回值：成功为 `0`，失败为非 `0`。
 
-#### `hook_create(void* target, void* detour, void** original) → int`
-
-#### `hook_enable(void* target) → int`
-
-#### `hook_disable(void* target) → int`
-
-#### `hook_remove(void* target) → int`
-
-**完整示例：**
+示例：
 
 ```c
-typedef int (__stdcall *CheckFunc_t)(void* self);
-static CheckFunc_t orig_check = NULL;
+uint8_t nop = 0x90;
+api->mem_write(address, &nop, 1);
+api->mem_fill(address + 1, 0x90, 5);
+```
 
-int __stdcall hook_check(void* self) {
-    return orig_check(self);
+### Inline Hook
+
+```c
+typedef int (*ChuModHookCreateFunc)(void* target, void* detour, void** original);
+typedef int (*ChuModHookEnableFunc)(void* target);
+typedef int (*ChuModHookDisableFunc)(void* target);
+typedef int (*ChuModHookRemoveFunc)(void* target);
+
+int hook_create(void* target, void* detour, void** original);
+int hook_enable(void* target);
+int hook_disable(void* target);
+int hook_remove(void* target);
+```
+
+创建并控制 inline hook。传入 `original` 时可获得 trampoline 指针。
+
+参数：
+- `target`：要 hook 的函数地址。
+- `detour`：替换函数。
+- `original`：可选输出参数，用于接收 trampoline。
+
+返回值：成功为 `0`，失败为非 `0`。
+
+示例：
+
+```c
+typedef int (__stdcall *TargetFn)(int);
+static TargetFn real_target = NULL;
+
+int __stdcall my_target(int value) {
+    return real_target(value + 1);
 }
 
-api->hook_create((void*)target, (void*)hook_check, (void**)&orig_check);
-api->hook_enable((void*)target);
-
-// cleanup
-api->hook_disable((void*)target);
-api->hook_remove((void*)target);
+api->hook_create((void*)target_addr, (void*)my_target, (void**)&real_target);
+api->hook_enable((void*)target_addr);
 ```
 
----
-
-### Mod 间通信 — 服务
-
-命名指针注册表，线程安全。
-
-#### `register_service(const char* name, void* service_ptr) → int`
-
-#### `get_service(const char* name) → void*`
-
-返回注册的指针，未找到返回 `NULL`。
-
-**示例：**
+### Mod 间通信
 
 ```c
-// --- 提供方 mod ---
-struct ScoreService {
-    int version;
-    int (*get_score)(void);
-};
+typedef int (*ChuModRegisterServiceFunc)(const char* name, void* service_ptr);
+typedef void* (*ChuModGetServiceFunc)(const char* name);
+typedef void (*ChuModMessageCallback)(const char* topic, void* data, uint32_t size);
+typedef int (*ChuModPublishFunc)(const char* topic, void* data, uint32_t size);
+typedef int (*ChuModSubscribeFunc)(const char* topic, ChuModMessageCallback callback);
 
-static struct ScoreService svc = { 1, my_get_score };
-api->register_service("score_service", &svc);
+int register_service(const char* name, void* service_ptr);
+void* get_service(const char* name);
+int publish(const char* topic, void* data, uint32_t size);
+int subscribe(const char* topic, ChuModMessageCallback callback);
+```
 
-// --- 客户方 mod ---
-struct ScoreService* s = (struct ScoreService*)api->get_service("score_service");
-if (s && s->version >= 1) {
-    int score = s->get_score();
+提供简单的命名服务查找和基于 topic 的消息发布/订阅。
+
+返回值：
+- `register_service`、`publish`、`subscribe`：成功为 `0`。
+- `get_service`：注册过的指针，不存在时为 `NULL`。
+
+示例：
+
+```c
+static void on_msg(const char* topic, void* data, uint32_t size) {
+    (void)topic;
+    (void)data;
+    (void)size;
+}
+
+api->register_service("example.counter", &counter_service);
+api->subscribe("example.ready", on_msg);
+api->publish("example.ready", NULL, 0);
+```
+
+## v2 API
+
+### RTTI 辅助
+
+```c
+typedef uintptr_t (*ChuModRttiFindVtableFunc)(const char* rtti_class_name);
+uintptr_t rtti_find_vtable(const char* rtti_class_name);
+```
+
+在游戏镜像中按 MSVC RTTI 类名查找 vtable。
+
+参数：
+- `rtti_class_name`：要查找的装饰或普通类名。
+
+返回值：vtable 地址；找不到时为 `0`。
+
+示例：
+
+```c
+uintptr_t vt = api->rtti_find_vtable("SomeGameClass");
+```
+
+### INI 配置
+
+```c
+int config_get_int(const char* key, int default_val);
+float config_get_float(const char* key, float default_val);
+int config_get_bool(const char* key, int default_val);
+int config_get_string(const char* key, char* buf, uint32_t buf_size, const char* default_val);
+int config_set_int(const char* key, int value);
+int config_set_float(const char* key, float value);
+int config_set_bool(const char* key, int value);
+int config_set_string(const char* key, const char* value);
+```
+
+读写 `mods/config/<mod_name>.ini` 下的单 Mod INI 配置，使用 `[config]` section。
+
+返回值：
+- getter 返回解析值或默认值。
+- `config_get_string` 写入 `buf` 并返回写入长度。
+- setter 成功返回 `0`。
+
+示例：
+
+```c
+int enabled = api->config_get_bool("enabled", 1);
+char name[64];
+api->config_get_string("profile", name, sizeof(name), "default");
+api->config_set_int("launch_count", 42);
+```
+
+## v2.5 API
+
+### 分级日志
+
+```c
+typedef void (*ChuModLogPlainFunc)(const char* message);
+void log_info(const char* message);
+void log_warn(const char* message);
+void log_error(const char* message);
+```
+
+按 INFO/WARN/ERROR 写入普通文本日志。跨语言调用时比 variadic 日志更安全。
+
+参数：
+- `message`：以 `\0` 结尾的 UTF-8/ANSI 文本。
+
+返回值：无。
+
+示例：
+
+```c
+api->log_info("configuration loaded");
+api->log_warn("optional pattern not found");
+api->log_error("required hook failed");
+```
+
+### 单 Mod 日志路径
+
+```c
+const char* log_path;
+```
+
+当前 Mod 的日志文件路径，通常为 `mods/log/<mod_name>.log`。不可用时可能为 `NULL`。
+
+示例：
+
+```c
+if (api->log_path) {
+    api->log_info(api->log_path);
 }
 ```
 
-> 依赖其他 mod 的服务时用 `chumod_depends` 保证加载顺序。
-
----
-
-### Mod 间通信 — 消息
-
-发布/订阅消息总线，同步调用，注册线程安全。
-
-#### `publish(const char* topic, void* data, uint32_t size) → int`
-
-向 `topic` 所有订阅者同步发送数据。
-
-#### `subscribe(const char* topic, ChuModMessageCallback callback) → int`
-
-**回调：**
+### TOML 配置
 
 ```c
-void callback(const char* topic, void* data, uint32_t size);
+int toml_section_exists(const char* section);
+int toml_get_bool(const char* section, const char* key, int default_val);
+int toml_get_int(const char* section, const char* key, int default_val);
+float toml_get_float(const char* section, const char* key, float default_val);
+int toml_get_string(const char* section, const char* key, char* buf, uint32_t buf_size, const char* default_val);
 ```
 
-**示例：**
+从 `mods/config/<mod_name>.toml` 读取单 Mod TOML 配置。若 TOML 文件不存在，legacy 配置 API 仍走 INI 路径。
+
+参数：
+- `section`：TOML 表名，例如 `"config"`、`"graphics"`、`"features"`。
+- `key`：表内键名。
+- `default_val`：section/key 缺失或类型无效时返回的默认值。
+- `buf` / `buf_size`：字符串输出缓冲区。
+
+返回值：
+- `toml_section_exists`：表存在返回 `1`，否则 `0`。
+- 其他 getter 返回解析值或默认值。
+- `toml_get_string` 返回写入长度。
+
+示例：
 
 ```c
-// 订阅
-void on_event(const char* topic, void* data, uint32_t size) {
-    int value = *(int*)data;
-    api->log("received %s: %d", topic, value);
+if (api->toml_section_exists("graphics")) {
+    int fps = api->toml_get_int("graphics", "target_fps", 60);
+    float scale = api->toml_get_float("graphics", "scale", 1.0f);
+    char preset[32];
+    api->toml_get_string("graphics", "preset", preset, sizeof(preset), "default");
 }
-api->subscribe("game_event", on_event);
-
-// 发布
-int payload = 42;
-api->publish("game_event", &payload, sizeof(payload));
 ```
 
----
+### Manifest 路径
+
+```c
+typedef const char* (*ChuModGetManifestPathFunc)(void);
+const char* get_manifest_path(void);
+```
+
+返回当前 Mod manifest 路径（`mods/manifest/<mod_name>.toml`），没有 manifest 时返回 `NULL`。
+
+示例：
+
+```c
+const char* manifest = api->get_manifest_path ? api->get_manifest_path() : NULL;
+if (manifest) {
+    api->log_info(manifest);
+}
+```
 
 ## Mod 导出函数
 
-均为可选，loader 通过 `GetProcAddress` 查找。
-
-### `chumod_name() → const char*`
-
-Mod 显示名称，用于日志。不导出则用文件名。
-
-### `chumod_init(const ChuModInfo* info, const ChuModAPI* api) → int`
-
-初始化入口。返回 `0` 成功，非零则 loader 卸载该 mod。
-
-### `chumod_shutdown()`
-
-退出时清理，按加载逆序调用。
-
-### `chumod_depends() → const char*`
-
-逗号分隔的依赖列表，loader 保证先加载。
+所有导出都是可选的；需要 API 的 Mod 通常导出 `chumod_init`。只有 `DllMain` 的 Plain DLL 也会被加载。
 
 ```c
-CHUMOD_API const char* chumod_depends() {
-    return "base_mod,utility_mod";
-}
+CHUMOD_API int chumod_init(const ChuModInfo* info, const ChuModAPI* api);
+CHUMOD_API void chumod_shutdown(void);
+CHUMOD_API const char* chumod_name(void);
+CHUMOD_API const char* chumod_depends(void);
+CHUMOD_API const char* chumod_version(void);
+CHUMOD_API const char* chumod_author(void);
+CHUMOD_API const char* chumod_min_loader_version(void);
+CHUMOD_API void chumod_on_ready(void);
 ```
 
----
+| 导出 | Loader 行为 |
+| --- | --- |
+| `chumod_init` | DLL 加载且依赖就绪后调用。返回 `0` 表示继续保留；非 `0` 会跳过并卸载。 |
+| `chumod_shutdown` | Loader 卸载期间、`FreeLibrary` 前调用。 |
+| `chumod_name` | 返回用于日志和依赖解析的显示名。 |
+| `chumod_depends` | 返回逗号分隔的依赖名。 |
+| `chumod_version` | 返回 Mod 版本元数据。 |
+| `chumod_author` | 返回 Mod 作者元数据。 |
+| `chumod_min_loader_version` | 返回最低 Loader 版本要求，例如 `"2.1.0"`。 |
+| `chumod_on_ready` | 所有成功的 `chumod_init` 完成后调用。 |
 
-## 双模式宏
-
-兼容 loader 和 `inject -k` 两种加载方式。
-
-### `CHUMOD_DUAL_MODE(init_func)`
-
-生成 `chumod_init` 导出和后备线程。独立注入时等 3 秒后调 `init_func`，此时 `ChuModAPI` 字段全为 NULL。
-
-### `CHUMOD_DUAL_MODE_START()`
-
-在 `DllMain` `DLL_PROCESS_ATTACH` 中调用。
+示例：
 
 ```c
-#include "chumod.h"
+static const ChuModAPI* g_api = NULL;
 
-static int my_init(const ChuModInfo* info, const ChuModAPI* api) {
-    if (api->log) api->log("hello");  // 双模式下检查 NULL
+CHUMOD_API const char* chumod_name(void) { return "Example Mod"; }
+CHUMOD_API const char* chumod_version(void) { return "1.0.0"; }
+CHUMOD_API const char* chumod_author(void) { return "Example Team"; }
+CHUMOD_API const char* chumod_min_loader_version(void) { return "2.5.0"; }
+CHUMOD_API const char* chumod_depends(void) { return "CoreMod"; }
+
+CHUMOD_API int chumod_init(const ChuModInfo* info, const ChuModAPI* api) {
+    (void)info;
+    g_api = api;
+    g_api->log_info("init");
     return 0;
 }
 
-CHUMOD_DUAL_MODE(my_init)
+CHUMOD_API void chumod_on_ready(void) {
+    g_api->log_info("all mods are ready");
+}
 
-BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
+CHUMOD_API void chumod_shutdown(void) {
+    if (g_api) g_api->log_info("shutdown");
+}
+```
+
+## `CHUMOD_DUAL_MODE`
+
+`CHUMOD_DUAL_MODE(init_func)` 让同一个 Mod 同时支持 ChuModLoader 加载和独立注入。Loader 模式会调用 `chumod_init`；独立注入模式从 `DllMain` 启动延迟兜底线程，并用尽力获取的游戏信息调用同一个初始化函数。
+
+```c
+static int my_init(const ChuModInfo* info, const ChuModAPI* api) {
+    (void)info;
+    if (api && api->log_info) api->log_info("dual mode init");
+    return 0;
+}
+
+CHUMOD_DUAL_MODE(my_init);
+
+BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
+    (void)module;
+    (void)reserved;
     if (reason == DLL_PROCESS_ATTACH) {
-        DisableThreadLibraryCalls(h);
         CHUMOD_DUAL_MODE_START();
     }
     return TRUE;
 }
 ```
 
----
-
-## 符号名称
-
-用于手动 `GetProcAddress` 或 DEF 文件：
-
-| 导出函数 | 字符串常量 |
-|---------|-----------|
-| `chumod_init` | `CHUMOD_INIT_NAME` |
-| `chumod_shutdown` | `CHUMOD_SHUTDOWN_NAME` |
-| `chumod_name` | `CHUMOD_NAME_NAME` |
-| `chumod_depends` | `CHUMOD_DEPENDS_NAME` |
+独立兜底模式下，大多数 API 函数指针是 `NULL`；调用前必须检查。
