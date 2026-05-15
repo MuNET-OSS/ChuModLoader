@@ -71,6 +71,11 @@ pub fn write_log_inner_level(state: &mut LoaderState, level: LogLevel, msg: &str
             let _ = f.flush();
         }
 
+        if let Some(ref mut f) = state.current_mod_log_file {
+            let _ = f.write_all(formatted.as_bytes());
+            let _ = f.flush();
+        }
+
         if state.console != INVALID_HANDLE_VALUE && !state.console.is_null() {
             let mut written = 0u32;
             let mut console_info: CONSOLE_SCREEN_BUFFER_INFO = std::mem::zeroed();

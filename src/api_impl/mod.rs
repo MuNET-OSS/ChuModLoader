@@ -38,6 +38,7 @@ static mut G_API: ChuModAPI = ChuModAPI {
     log_info: None,
     log_warn: None,
     log_error: None,
+    log_path: std::ptr::null(),
 };
 
 fn make_api() -> ChuModAPI {
@@ -68,7 +69,12 @@ fn make_api() -> ChuModAPI {
         log_info: Some(log_api::api_log_info),
         log_warn: Some(log_api::api_log_warn),
         log_error: Some(log_api::api_log_error),
+        log_path: std::ptr::null(),
     }
+}
+
+pub unsafe fn set_log_path(path: *const std::ffi::c_char) {
+    G_API.log_path = path;
 }
 
 pub unsafe fn init() {

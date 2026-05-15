@@ -21,6 +21,7 @@ pub struct LoaderState {
     pub mods: Vec<LoadedMod>,
     pub base_dir: String,
     pub log_file: Option<File>,
+    pub current_mod_log_file: Option<File>,
     pub console: HANDLE,
 }
 
@@ -33,6 +34,7 @@ impl Default for LoaderState {
             mods: Vec::new(),
             base_dir: String::new(),
             log_file: None,
+            current_mod_log_file: None,
             console: INVALID_HANDLE_VALUE,
         }
     }

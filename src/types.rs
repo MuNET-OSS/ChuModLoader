@@ -52,6 +52,7 @@ pub struct ChuModAPI {
     pub log_info: Option<unsafe extern "C" fn(*const c_char)>,
     pub log_warn: Option<unsafe extern "C" fn(*const c_char)>,
     pub log_error: Option<unsafe extern "C" fn(*const c_char)>,
+    pub log_path: *const c_char,
 }
 
 pub type ChuModInitFunc = unsafe extern "C" fn(*const ChuModInfo, *const ChuModAPI) -> i32;
