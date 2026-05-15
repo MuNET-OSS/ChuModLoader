@@ -6,14 +6,12 @@ use crate::types::ChuModDependsFunc;
 
 use super::log::log_info;
 use super::state::HMODULE;
-use super::metadata::ModMetadata;
 
 pub struct PendingMod {
     pub file_name: String,
     pub handle: HMODULE,
     pub display_name: String,
     pub dependencies: Vec<String>,
-    pub metadata: ModMetadata,
 }
 
 unsafe impl Send for PendingMod {}

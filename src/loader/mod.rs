@@ -119,7 +119,6 @@ pub unsafe fn load_mods() {
             handle: mod_handle,
             display_name,
             dependencies,
-            metadata,
         });
     }
 
