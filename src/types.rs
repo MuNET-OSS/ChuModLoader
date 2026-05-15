@@ -1,6 +1,7 @@
 use std::ffi::{c_char, c_void};
 
 pub const CHUMOD_API_VERSION: u32 = 2;
+pub const LOADER_VERSION: &str = "2.1.0";
 
 #[repr(C)]
 pub struct ChuModInfo {
@@ -53,3 +54,4 @@ pub type ChuModInitFunc = unsafe extern "C" fn(*const ChuModInfo, *const ChuModA
 pub type ChuModShutdownFunc = unsafe extern "C" fn();
 pub type ChuModNameFunc = unsafe extern "C" fn() -> *const c_char;
 pub type ChuModDependsFunc = unsafe extern "C" fn() -> *const c_char;
+pub type ChuModStringFunc = unsafe extern "C" fn() -> *const c_char;

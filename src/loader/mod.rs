@@ -18,10 +18,13 @@ use windows_sys::Win32::System::LibraryLoader::{
 };
 
 use crate::api_impl;
-use crate::types::{ChuModInfo, ChuModInitFunc, ChuModNameFunc, ChuModShutdownFunc, CHUMOD_API_VERSION};
+use crate::types::{
+    ChuModInfo, ChuModInitFunc, ChuModNameFunc, ChuModShutdownFunc, CHUMOD_API_VERSION,
+};
 
 use self::dependency::{read_dependencies, sort_mods, PendingMod};
 use self::log::{log_info, write_log_inner, write_log_variadic};
+use self::metadata::{read_metadata, should_load_metadata};
 use self::pe::{get_self_base_dir, parse_game_info};
 use self::scanner::{ensure_mods_layout, scan_mod_files};
 use self::seh::{call_mod_init, call_mod_shutdown};
@@ -91,12 +94,27 @@ pub unsafe fn load_mods() {
             }
         }
 
+        let metadata = read_metadata(mod_handle);
+        if !should_load_metadata(&display_name, &metadata) {
+            FreeLibrary(mod_handle);
+            continue;
+        }
+        if metadata.version.is_some() || metadata.author.is_some() {
+            log_info(&format!(
+                "mod metadata: {} version={} author={}",
+                display_name,
+                metadata.version.as_deref().unwrap_or("unknown"),
+                metadata.author.as_deref().unwrap_or("unknown")
+            ));
+        }
+
         let dependencies = read_dependencies(mod_handle);
         pending_mods.push(PendingMod {
             file_name: mod_name,
             handle: mod_handle,
             display_name,
             dependencies,
+            metadata,
         });
     }
 
@@ -113,7 +131,7 @@ pub unsafe fn load_mods() {
             } else {
                 std::ptr::null()
             };
-            let loader_ver = b"2.0.0\0".as_ptr() as *const c_char;
+            let loader_ver = concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const c_char;
             let info = ChuModInfo {
                 api_version: CHUMOD_API_VERSION,
                 loader_version: loader_ver,
