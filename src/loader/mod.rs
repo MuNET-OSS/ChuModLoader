@@ -3,6 +3,7 @@ pub mod log;
 pub mod metadata;
 pub mod pe;
 pub mod scanner;
+pub mod seh;
 pub mod state;
 
 use std::ffi::{c_char, CStr};
@@ -23,6 +24,7 @@ use self::dependency::{read_dependencies, sort_mods, PendingMod};
 use self::log::{log_info, write_log_inner, write_log_variadic};
 use self::pe::{get_self_base_dir, parse_game_info};
 use self::scanner::{ensure_mods_layout, scan_mod_files};
+use self::seh::{call_mod_init, call_mod_shutdown};
 use self::state::{LoadedMod, STATE};
 
 extern "system" {
@@ -92,7 +94,6 @@ pub unsafe fn load_mods() {
         let dependencies = read_dependencies(mod_handle);
         pending_mods.push(PendingMod {
             file_name: mod_name,
-            path: full_path,
             handle: mod_handle,
             display_name,
             dependencies,
@@ -135,9 +136,11 @@ pub unsafe fn load_mods() {
                 .unwrap_or(&mod_name);
             api_impl::set_current_config(&format!("{}\\{}.ini", config_dir, mod_stem));
 
-            let ret = init_fn(&info, api);
-            if ret != 0 {
-                log_info(&format!("mod init failed (ret={}): {}", ret, display_name));
+            let ret = call_mod_init(&display_name, init_fn, &info, api);
+            if ret != Some(0) {
+                if let Some(ret) = ret {
+                    log_info(&format!("mod init failed (ret={}): {}", ret, display_name));
+                }
                 FreeLibrary(mod_handle);
                 continue;
             }
@@ -165,7 +168,7 @@ pub unsafe fn unload_mods() {
     while let Some(m) = state.mods.pop() {
         write_log_inner(&mut state, &format!("unloading mod: {}", m.name));
         if let Some(shutdown) = m.shutdown {
-            shutdown();
+            call_mod_shutdown(&m.name, shutdown);
         }
         if !m.handle.is_null() {
             FreeLibrary(m.handle);
