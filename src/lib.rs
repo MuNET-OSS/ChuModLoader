@@ -46,7 +46,12 @@ unsafe extern "system" fn DllMain(h_module: HMODULE, reason: u32, _reserved: *mu
             );
         }
         DLL_PROCESS_DETACH => {
-            loader::unload_mods();
+            // _reserved 非 NULL = 进程正在终止 (ExitProcess)
+            // 此时不能等待线程或做复杂清理，OS 会回收所有资源
+            if _reserved.is_null() {
+                // 动态卸载 (FreeLibrary)，安全清理
+                loader::unload_mods();
+            }
         }
         _ => {}
     }
