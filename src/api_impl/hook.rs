@@ -36,28 +36,16 @@ pub unsafe extern "C" fn api_hook_create(
 pub unsafe extern "C" fn api_hook_enable(target: *mut c_void) -> i32 {
     let hooks = HOOKS.lock().unwrap();
     match hooks.get(&(target as usize)) {
-        Some(entry) => {
-            if entry.detour.enable().is_ok() {
-                0
-            } else {
-                -1
-            }
-        }
-        None => -1,
+        Some(entry) if entry.detour.enable().is_ok() => 0,
+        _ => -1,
     }
 }
 
 pub unsafe extern "C" fn api_hook_disable(target: *mut c_void) -> i32 {
     let hooks = HOOKS.lock().unwrap();
     match hooks.get(&(target as usize)) {
-        Some(entry) => {
-            if entry.detour.disable().is_ok() {
-                0
-            } else {
-                -1
-            }
-        }
-        None => -1,
+        Some(entry) if entry.detour.disable().is_ok() => 0,
+        _ => -1,
     }
 }
 

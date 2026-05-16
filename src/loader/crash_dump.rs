@@ -70,7 +70,7 @@ unsafe extern "system" fn unhandled_exception_filter(exception: *mut EXCEPTION_P
 unsafe fn write_crash_report(exception: *mut EXCEPTION_POINTERS) -> Result<(), String> {
     let base_dir = get_self_base_dir().ok_or_else(|| "cannot resolve base dir".to_string())?;
     let crash_dir = format!("{}\\mods\\crash", base_dir);
-    CreateDirectoryA(format!("{}\0", format!("{}\\mods", base_dir)).as_ptr(), null());
+    CreateDirectoryA(format!("{}\\mods\0", base_dir).as_ptr(), null());
     CreateDirectoryA(format!("{}\0", crash_dir).as_ptr(), null());
 
     let stamp = timestamp();
@@ -98,7 +98,7 @@ unsafe fn write_minidump(path: &str, exception: *mut EXCEPTION_POINTERS) -> Resu
         return Err(format!("CreateFileA failed for {}", path));
     }
 
-    let mut exception_info = MINIDUMP_EXCEPTION_INFORMATION {
+    let exception_info = MINIDUMP_EXCEPTION_INFORMATION {
         ThreadId: GetCurrentThreadId(),
         ExceptionPointers: exception,
         ClientPointers: 0,
@@ -108,7 +108,7 @@ unsafe fn write_minidump(path: &str, exception: *mut EXCEPTION_POINTERS) -> Resu
         GetCurrentProcessId(),
         file,
         MiniDumpNormal,
-        &mut exception_info,
+        &exception_info,
         null_mut(),
         null_mut(),
     );

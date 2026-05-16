@@ -1,4 +1,4 @@
-#![allow(non_snake_case)]
+#![allow(non_snake_case, clippy::manual_c_str_literals, clippy::upper_case_acronyms)]
 #![feature(c_variadic)]
 
 mod api_impl;
@@ -45,6 +45,7 @@ unsafe extern "system" fn DllMain(h_module: HMODULE, reason: u32, _reserved: *mu
                 std::ptr::null_mut(),
             );
         }
+        #[allow(clippy::collapsible_match)]
         DLL_PROCESS_DETACH => {
             // _reserved 非 NULL = 进程正在终止 (ExitProcess)
             // 此时不能等待线程或做复杂清理，OS 会回收所有资源

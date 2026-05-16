@@ -20,8 +20,8 @@ pub unsafe extern "C" fn api_aob_scan(
     for i in 0..=(size as usize - len) {
         let mem = start + i;
         let mut ok = true;
-        for j in 0..len {
-            if mask_bytes[j] == b'x' && *((mem + j) as *const u8) != *pat.add(j) {
+        for (j, &m) in mask_bytes.iter().enumerate() {
+            if m == b'x' && *((mem + j) as *const u8) != *pat.add(j) {
                 ok = false;
                 break;
             }
