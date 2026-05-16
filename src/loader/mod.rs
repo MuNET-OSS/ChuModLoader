@@ -31,12 +31,11 @@ use self::dependency::{read_dependencies, sort_mods, PendingMod};
 use self::log::{log_info, write_log_inner, write_log_variadic};
 use self::metadata::{read_metadata, should_load_metadata};
 use self::pe::{get_self_base_dir, parse_game_info, read_game_version};
-use self::scanner::{ensure_mods_layout, scan_manifest_files, scan_mod_files};
+use self::scanner::{ensure_mods_dir, scan_manifest_files, scan_mod_files};
 use self::seh::{call_mod_init, call_mod_on_ready, call_mod_shutdown};
 use self::state::{LoadedMod, STATE};
 
 extern "system" {
-    fn CreateDirectoryA(path: *const u8, security: *const std::ffi::c_void) -> i32;
     fn FreeLibrary(module: *mut std::ffi::c_void) -> i32;
 }
 
@@ -77,9 +76,8 @@ pub unsafe fn load_mods() {
     let game_version_c = std::ffi::CString::new(game_version).unwrap_or_default();
     api_impl::set_rtti_info(rdata_base, rdata_size as usize, text_base);
 
-    let (mods_dir, ini_path) = ensure_mods_layout(&base_dir);
+    let mods_dir = ensure_mods_dir(&base_dir);
     log_info(&format!("scan mods dir: {}", mods_dir));
-    log_info(&format!("config file: {}", ini_path));
     let manifests = scan_manifest_files(&base_dir);
     {
         let mut state = STATE.lock().unwrap();
@@ -90,7 +88,7 @@ pub unsafe fn load_mods() {
     }
 
     let mut pending_mods = Vec::new();
-    for (mod_name, full_path) in scan_mod_files(&mods_dir, &ini_path) {
+    for (mod_name, full_path) in scan_mod_files(&mods_dir) {
         let full_path_c = format!("{}\0", full_path);
         let mod_handle = LoadLibraryA(full_path_c.as_ptr());
         if mod_handle.is_null() {
@@ -117,13 +115,8 @@ pub unsafe fn load_mods() {
             FreeLibrary(mod_handle);
             continue;
         }
-        if metadata.version.is_some() || metadata.author.is_some() {
-            log_info(&format!(
-                "mod metadata: {} version={} author={}",
-                display_name,
-                metadata.version.as_deref().unwrap_or("unknown"),
-                metadata.author.as_deref().unwrap_or("unknown")
-            ));
+        if let Some(version) = &metadata.version {
+            log_info(&format!("mod: {} v{}", display_name, version));
         }
 
         let dependencies = read_dependencies(mod_handle);

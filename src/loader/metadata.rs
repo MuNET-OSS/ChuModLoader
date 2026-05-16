@@ -10,7 +10,6 @@ use super::state::HMODULE;
 #[derive(Default)]
 pub struct ModMetadata {
     pub version: Option<String>,
-    pub author: Option<String>,
     pub min_loader_version: Option<String>,
 }
 
@@ -27,7 +26,6 @@ unsafe fn read_string_export(handle: HMODULE, export: &'static [u8]) -> Option<S
 pub unsafe fn read_metadata(handle: HMODULE) -> ModMetadata {
     ModMetadata {
         version: read_string_export(handle, b"chumod_version\0"),
-        author: read_string_export(handle, b"chumod_author\0"),
         min_loader_version: read_string_export(handle, b"chumod_min_loader_version\0")
             .filter(|v| !v.trim().is_empty()),
     }
