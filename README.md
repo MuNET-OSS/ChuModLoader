@@ -1,168 +1,47 @@
 # ChuModLoader
 
-Mod loading framework for CHUNITHM. Proxies `version.dll` to load mod DLLs from `mods/` at runtime.
+[English](README.en.md) | 简体中文
 
-> **[中文说明](README_cn.md)**
+CHUNITHM Mod 加载框架。通过代理 `version.dll`，在游戏启动时自动从 `mods/` 目录加载 mod DLL。
 
-> **v2.0.0** — Loader rewritten from C++ to Rust. Mod C ABI unchanged; existing mod DLLs work without modification. C++ mods remain fully supported via `chumod.h` — the header is maintained alongside the Rust codebase and will continue to receive updates. Legacy C++ loader code at tag [`v1.0.0-cpp`](https://github.com/Applesaber/ChuModLoader/tree/v1.0.0-cpp).
+## 功能
 
-## Features
+- `version.dll` 代理，转发全部 17 个系统导出
+- 自动扫描 `mods/*.dll` 加载
+- Mod API (C ABI)：内存读写、AOB 扫描、inline hook、RTTI vtable 查找、mod 间通信
+- TOML / INI 配置 API
+- 分级日志 (info/warn/error) + 控制台颜色 + per-mod 日志文件
+- 依赖拓扑排序
+- 崩溃保护 (catch_unwind)
+- 游戏版本检测 + min_loader_version 检查
+- 生命周期: init → on_ready → on_frame → shutdown
+- 热重载 (reload_mod API + reload.flag)
+- crash dump + 栈回溯
+- Rust 编写，mod 可用 Rust、C/C++ 或任何能编译 Win32 DLL 的语言
 
-- `version.dll` proxy, forwards all 17 exports to the real system DLL
-- Auto-scans `mods/*.dll` on startup, no config needed
-- Optional Mod API (`chumod_init`) with memory read/write, AOB scan, inline hook, inter-mod IPC; plain DLLs work too
-- `mods.ini` to disable individual mods
-- Inline hooking via [retour](https://crates.io/crates/retour)
-- Written in Rust, mods can be written in Rust, C/C++, or any language that produces a Win32 DLL
+## 安装
 
-## Installation
+1. 构建或下载 `version.dll`
+2. 放到游戏目录（和 `chusanApp.exe` 同级）
+3. 把 mod DLL 放进 `mods/`
+4. 正常启动游戏
 
-1. Build or download `version.dll`
-2. Place it in the game directory (next to `chusanApp.exe`)
-3. Drop mod DLLs into `mods/`
-4. Launch the game normally
+## 构建
 
-`mods/` directory and `mods.ini` are created automatically on first run.
-
-## Configuration
-
-`mods.ini` is auto-generated in the game directory. To disable a mod:
-
-```ini
-[mods]
-mod_name.dll=0
-```
-
-Mods not listed (or set to `1`) are loaded by default.
-
-### Per-Mod Configuration (v2)
-
-Each mod gets its own config file at `mods/config/<mod_name>.ini`, created automatically on first access. Mods read/write settings via the Config API:
-
-```c
-// read with defaults (file created automatically if missing)
-int fov = api->config_get_int("fov", 75);
-float bloom = api->config_get_float("bloom_intensity", 1.0f);
-int unlock = api->config_get_bool("unlock_fps", 0);
-
-// write (persisted to INI immediately)
-api->config_set_int("fov", 90);
-api->config_set_bool("unlock_fps", 1);
-```
-
-```ini
-; mods/config/my_mod.ini
-[config]
-fov=90
-bloom_intensity=1.0
-unlock_fps=true
-```
-
-## For Mod Developers
-
-See [Mod Development Guide](docs/mod-development.md) and [API Reference](docs/api-reference.md).
-
-### Quick Start (Rust)
-
-```rust
-use std::ffi::{c_char, c_void};
-
-#[repr(C)]
-pub struct ChuModInfo {
-    pub api_version: u32,
-    pub loader_version: *const c_char,
-    pub game_module: *const c_char,
-    pub game_base: usize,
-    pub game_size: u32,
-    pub text_base: usize,
-    pub text_size: u32,
-}
-
-#[repr(C)]
-pub struct ChuModAPI {
-    pub struct_size: u32,
-    pub log: Option<unsafe extern "C" fn(*const c_char, ...)>,
-    // ... other fields
-}
-
-#[no_mangle]
-pub extern "C" fn chumod_name() -> *const c_char {
-    b"My Rust Mod\0".as_ptr() as *const c_char
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn chumod_init(
-    info: *const ChuModInfo,
-    _api: *const ChuModAPI,
-) -> i32 {
-    // your init code
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn chumod_shutdown() {}
-```
-
-### Quick Start (C/C++)
-
-```c
-#include "chumod.h"
-
-CHUMOD_API const char* chumod_name() { return "My Mod"; }
-
-CHUMOD_API int chumod_init(const ChuModInfo* info, const ChuModAPI* api) {
-    api->log("game base = 0x%08X, .text = 0x%08X +0x%X",
-             info->game_base, info->text_base, info->text_size);
-    return 0;
-}
-
-CHUMOD_API void chumod_shutdown() { }
-```
-
-All exports are optional. Plain DLL with `DllMain` only also works.
-
-## Building
-
-Requires Rust toolchain with `i686-pc-windows-msvc` target:
+需要 Rust nightly + `i686-pc-windows-msvc`：
 
 ```bash
-rustup toolchain install nightly --target i686-pc-windows-msvc
-cargo +nightly build --release
+cargo build --release
 ```
 
-Output: `target/i686-pc-windows-msvc/release/version.dll`
+输出: `target/i686-pc-windows-msvc/release/version.dll`
 
-> **C++ build**: The loader was previously built with CMake 3.15+ and MSVC (`cmake -B build -A Win32 && cmake --build build --config Release`).
+## Mod 开发
 
-## How It Works
+参见 [docs/mod-development.md](docs/mod-development.md) 和 [docs/api-reference.md](docs/api-reference.md)。
 
-Exploits Windows DLL search order (application directory before System32):
+头文件: [include/chumod.h](include/chumod.h)
 
-1. Loads the real `version.dll` from System32, forwards exports via naked JMP
-2. Background thread waits 2s, scans `mods/*.dll`, calls `LoadLibrary` on each
-3. Parses PE headers for `.text` section info, calls `chumod_init` on API-exporting mods
-4. On exit, calls `chumod_shutdown` in reverse order, then `FreeLibrary`
+## 许可证
 
-## Logging
-
-Output to `chusan_loader.log` and console if available. Format: `[HH:MM:SS.mmm] [loader] message`
-
-## Project Structure
-
-```
-ChuModLoader/
-├── include/chumod.h        # Mod API header (for C/C++ mods)
-├── src/
-│   ├── lib.rs               # version.dll proxy entry (DllMain + forward_dll)
-│   ├── loader.rs            # mod scanning & loading
-│   └── api_impl.rs          # API implementation (retour hooks, memory, IPC)
-├── docs/
-│   ├── mod-development.md
-│   └── api-reference.md
-├── Cargo.toml
-└── build.rs
-```
-
-## License
-
-MIT
+Apache-2.0
