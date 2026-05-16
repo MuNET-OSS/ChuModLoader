@@ -1,7 +1,7 @@
 use std::ffi::{c_char, c_void};
 
 pub const CHUMOD_API_VERSION: u32 = 3;
-pub const LOADER_VERSION: &str = "3.0.0";
+pub const LOADER_VERSION: &str = "1.0.0";
 
 #[repr(C)]
 pub struct ChuModInfo {
