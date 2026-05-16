@@ -1,6 +1,6 @@
 use std::ffi::{c_char, c_void, CStr};
 
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::Storage::FileSystem::{
     FindClose, FindFirstFileA, FindNextFileA, GetFileAttributesA, FILE_ATTRIBUTE_DIRECTORY,
     INVALID_FILE_ATTRIBUTES, WIN32_FIND_DATAA,
@@ -8,27 +8,7 @@ use windows_sys::Win32::Storage::FileSystem::{
 
 use super::log::log_info;
 
-const GENERIC_WRITE: u32 = 0x40000000;
-const CREATE_NEW: u32 = 1;
-const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
-
 extern "system" {
-    fn CreateFileA(
-        name: *const u8,
-        access: u32,
-        share: u32,
-        security: *const c_void,
-        disposition: u32,
-        flags: u32,
-        template: *mut c_void,
-    ) -> HANDLE;
-    fn WriteFile(
-        file: HANDLE,
-        buf: *const u8,
-        len: u32,
-        written: *mut u32,
-        overlapped: *mut c_void,
-    ) -> i32;
     fn CreateDirectoryA(path: *const u8, security: *const c_void) -> i32;
     fn GetPrivateProfileStringA(
         app: *const u8,
@@ -49,32 +29,6 @@ pub fn ensure_mods_layout(base_dir: &str) -> (String, String) {
         if GetFileAttributesA(mods_dir_c.as_ptr()) == INVALID_FILE_ATTRIBUTES {
             CreateDirectoryA(mods_dir_c.as_ptr(), std::ptr::null());
             log_info(&format!("created mods dir: {}", mods_dir));
-        }
-
-        let ini_path_c = format!("{}\0", ini_path);
-        if GetFileAttributesA(ini_path_c.as_ptr()) == INVALID_FILE_ATTRIBUTES {
-            let hf = CreateFileA(
-                ini_path_c.as_ptr(),
-                GENERIC_WRITE,
-                0,
-                std::ptr::null(),
-                CREATE_NEW,
-                FILE_ATTRIBUTE_NORMAL,
-                std::ptr::null_mut(),
-            );
-            if hf != INVALID_HANDLE_VALUE {
-                let default_ini = b"[mods]\r\n; mod_name.dll=0\r\n";
-                let mut written = 0u32;
-                WriteFile(
-                    hf,
-                    default_ini.as_ptr(),
-                    default_ini.len() as u32,
-                    &mut written,
-                    std::ptr::null_mut(),
-                );
-                CloseHandle(hf);
-                log_info("created default mods.ini");
-            }
         }
 
         (mods_dir, ini_path)
@@ -144,7 +98,6 @@ pub fn scan_mod_files(mods_dir: &str, ini_path: &str) -> Vec<(String, String)> {
 pub fn scan_manifest_files(base_dir: &str) -> Vec<String> {
     unsafe {
         let manifest_dir = format!("{}\\mods\\manifest", base_dir);
-        CreateDirectoryA(format!("{}\0", manifest_dir).as_ptr(), std::ptr::null());
 
         let pattern = format!("{}\\*.toml\0", manifest_dir);
         let mut find_data: WIN32_FIND_DATAA = std::mem::zeroed();

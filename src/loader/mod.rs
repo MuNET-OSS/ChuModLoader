@@ -165,9 +165,7 @@ pub unsafe fn load_mods() {
             };
 
             let config_dir = format!("{}\\mods\\config", base_dir);
-            CreateDirectoryA(format!("{}\0", config_dir).as_ptr(), std::ptr::null());
             let log_dir = format!("{}\\mods\\log", base_dir);
-            CreateDirectoryA(format!("{}\0", log_dir).as_ptr(), std::ptr::null());
             let mod_stem = mod_name
                 .strip_suffix(".dll")
                 .or_else(|| mod_name.strip_suffix(".DLL"))
