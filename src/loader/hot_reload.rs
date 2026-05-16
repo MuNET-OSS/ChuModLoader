@@ -3,8 +3,9 @@ use std::fs::File;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
-use windows_sys::Win32::Foundation::GetLastError;
+use windows_sys::Win32::Foundation::{GetLastError, HANDLE};
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress, LoadLibraryA};
 use windows_sys::Win32::System::Threading::Sleep;
 
@@ -24,6 +25,11 @@ static MONITOR_STARTED: AtomicBool = AtomicBool::new(false);
 static MONITOR_RUNNING: AtomicBool = AtomicBool::new(false);
 static RELOAD_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
+struct SendHandle(HANDLE);
+unsafe impl Send for SendHandle {}
+
+static MONITOR_THREAD_HANDLE: Mutex<Option<SendHandle>> = Mutex::new(None);
+
 extern "system" {
     fn CreateDirectoryA(path: *const u8, security: *const std::ffi::c_void) -> i32;
     fn CreateThread(
@@ -33,8 +39,10 @@ extern "system" {
         param: *mut std::ffi::c_void,
         flags: u32,
         id: *mut u32,
-    ) -> *mut std::ffi::c_void;
+    ) -> HANDLE;
     fn FreeLibrary(module: *mut std::ffi::c_void) -> i32;
+    fn WaitForSingleObject(handle: HANDLE, milliseconds: u32) -> u32;
+    fn CloseHandle(handle: HANDLE) -> i32;
 }
 
 pub fn is_reloading() -> bool {
@@ -75,12 +83,26 @@ pub fn start_monitor() {
             log_warn("failed to start reload.flag monitor thread");
             return;
         }
+        if let Ok(mut h) = MONITOR_THREAD_HANDLE.lock() {
+            *h = Some(SendHandle(handle));
+        }
     }
     log_info("reload.flag monitor thread started");
 }
 
 pub fn stop_monitor() {
+    if !MONITOR_STARTED.load(Ordering::SeqCst) {
+        return;
+    }
     MONITOR_RUNNING.store(false, Ordering::SeqCst);
+    unsafe {
+        if let Ok(mut h) = MONITOR_THREAD_HANDLE.lock() {
+            if let Some(SendHandle(handle)) = h.take() {
+                WaitForSingleObject(handle, 2000);
+                CloseHandle(handle);
+            }
+        }
+    }
     MONITOR_STARTED.store(false, Ordering::SeqCst);
 }
 

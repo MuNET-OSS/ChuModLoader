@@ -1,13 +1,19 @@
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
+use windows_sys::Win32::Foundation::HANDLE;
 use windows_sys::Win32::System::Threading::Sleep;
 
 use super::log::{log_info, log_warn};
 use super::seh::call_mod_on_frame;
 use super::state::STATE;
 
+struct SendHandle(HANDLE);
+unsafe impl Send for SendHandle {}
+
 static FRAME_THREAD_STARTED: AtomicBool = AtomicBool::new(false);
 static FRAME_THREAD_RUNNING: AtomicBool = AtomicBool::new(false);
+static FRAME_THREAD_HANDLE: Mutex<Option<SendHandle>> = Mutex::new(None);
 
 extern "system" {
     fn CreateThread(
@@ -17,7 +23,9 @@ extern "system" {
         param: *mut std::ffi::c_void,
         flags: u32,
         id: *mut u32,
-    ) -> *mut std::ffi::c_void;
+    ) -> HANDLE;
+    fn WaitForSingleObject(handle: HANDLE, milliseconds: u32) -> u32;
+    fn CloseHandle(handle: HANDLE) -> i32;
 }
 
 pub fn start_if_needed() {
@@ -49,12 +57,26 @@ pub fn start_if_needed() {
             log_warn("failed to start chumod_on_frame fallback thread");
             return;
         }
+        if let Ok(mut h) = FRAME_THREAD_HANDLE.lock() {
+            *h = Some(SendHandle(handle));
+        }
     }
     log_info("chumod_on_frame fallback thread started (16ms interval)");
 }
 
 pub fn stop() {
+    if !FRAME_THREAD_STARTED.load(Ordering::SeqCst) {
+        return;
+    }
     FRAME_THREAD_RUNNING.store(false, Ordering::SeqCst);
+    unsafe {
+        if let Ok(mut h) = FRAME_THREAD_HANDLE.lock() {
+            if let Some(SendHandle(handle)) = h.take() {
+                WaitForSingleObject(handle, 2000);
+                CloseHandle(handle);
+            }
+        }
+    }
     FRAME_THREAD_STARTED.store(false, Ordering::SeqCst);
 }
 
@@ -71,7 +93,6 @@ pub unsafe fn tick() {
         return;
     }
 
-    // 复制回调后释放锁，避免 Mod 回调里调用 Loader API 时发生锁重入。
     let frame_mods: Vec<_> = STATE
         .lock()
         .map(|state| {
