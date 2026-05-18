@@ -27,15 +27,17 @@ unsafe fn load_real_d3d9() -> bool {
     if REAL_D3D9.is_null() {
         return false;
     }
-    let proc = GetProcAddress(REAL_D3D9, b"Direct3DCreate9\0".as_ptr());
+    let proc = GetProcAddress(REAL_D3D9, c"Direct3DCreate9".as_ptr().cast());
     REAL_DIRECT3D_CREATE9 = proc.map_or(0, |f| f as usize);
 
-    let proc_ex = GetProcAddress(REAL_D3D9, b"Direct3DCreate9Ex\0".as_ptr());
+    let proc_ex = GetProcAddress(REAL_D3D9, c"Direct3DCreate9Ex".as_ptr().cast());
     REAL_DIRECT3D_CREATE9_EX = proc_ex.map_or(0, |f| f as usize);
 
     REAL_DIRECT3D_CREATE9 != 0
 }
 
+/// # Safety
+/// Must only be called after `load_real_d3d9` has succeeded.
 #[no_mangle]
 pub unsafe extern "system" fn Direct3DCreate9(sdk_version: u32) -> *mut c_void {
     if REAL_DIRECT3D_CREATE9 == 0 {
@@ -52,6 +54,8 @@ pub unsafe extern "system" fn Direct3DCreate9(sdk_version: u32) -> *mut c_void {
     d3d9_wrapper::create(real_d3d9, cfg)
 }
 
+/// # Safety
+/// Must only be called after `load_real_d3d9` has succeeded.
 #[no_mangle]
 pub unsafe extern "system" fn Direct3DCreate9Ex(sdk_version: u32, ppd3d: *mut *mut c_void) -> i32 {
     if REAL_DIRECT3D_CREATE9_EX == 0 {

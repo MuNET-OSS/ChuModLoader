@@ -47,10 +47,9 @@ pub fn apply_pending(config: &mut Config) {
 
 pub fn run_present_callbacks(device: *mut c_void) {
     unsafe {
-        for cb in &PRESENT_CALLBACKS {
-            if let Some(f) = cb {
-                f(device);
-            }
+        let callbacks = &raw const PRESENT_CALLBACKS;
+        for f in (*callbacks).iter().flatten() {
+            f(device);
         }
     }
 }
@@ -62,7 +61,8 @@ pub extern "C" fn d3d9proxy_get_api() -> *const D3D9ProxyAPI {
 
 unsafe extern "C" fn api_set_frame_lock(fps: u32) {
     PENDING.frame_lock = if fps > 0 { Some(fps) } else { None };
-    if let Some(cfg) = &mut crate::device_wrapper::DEVICE_CONFIG {
+    let cfg_ptr = &raw mut crate::device_wrapper::DEVICE_CONFIG;
+    if let Some(cfg) = unsafe { &mut *cfg_ptr } {
         cfg.frame_lock = if fps > 0 { Some(fps) } else { None };
     }
 }
@@ -76,7 +76,8 @@ unsafe extern "C" fn api_get_hwnd() -> usize {
 }
 
 unsafe extern "C" fn api_register_present_callback(cb: PresentCallbackFn) {
-    for slot in &mut PRESENT_CALLBACKS {
+    let slots_ptr = &raw mut PRESENT_CALLBACKS;
+    for slot in unsafe { &mut *slots_ptr } {
         if slot.is_none() {
             *slot = Some(cb);
             return;

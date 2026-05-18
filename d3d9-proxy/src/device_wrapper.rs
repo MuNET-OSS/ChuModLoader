@@ -56,20 +56,24 @@ unsafe extern "system" fn hooked_present(
     dest_window_override: usize,
     dirty_region: *const c_void,
 ) -> i32 {
-    if let Some(state) = &mut FPS_STATE {
-        if let Some(cfg) = &DEVICE_CONFIG {
+    let fps_ptr = &raw mut FPS_STATE;
+    let dev_cfg_ptr = &raw const DEVICE_CONFIG;
+    if let Some(state) = unsafe { &mut *fps_ptr } {
+        if let Some(cfg) = unsafe { &*dev_cfg_ptr } {
             if let Some(target_fps) = cfg.frame_lock {
                 state.frame_lock(target_fps);
             }
         }
     }
 
-    PRESENT_HOOK.as_ref().unwrap().call(this, source_rect, dest_rect, dest_window_override, dirty_region)
+    let hook_ptr = &raw const PRESENT_HOOK;
+    unsafe { (*hook_ptr).as_ref().unwrap().call(this, source_rect, dest_rect, dest_window_override, dirty_region) }
 }
 
 // IDirect3DDevice9::EndScene()
 unsafe extern "system" fn hooked_end_scene(this: *mut c_void) -> i32 {
     mod_api::run_present_callbacks(this);
 
-    END_SCENE_HOOK.as_ref().unwrap().call(this)
+    let hook_ptr = &raw const END_SCENE_HOOK;
+    unsafe { (*hook_ptr).as_ref().unwrap().call(this) }
 }

@@ -12,7 +12,7 @@ static mut D3D9_CONFIG: Option<Config> = None;
 pub unsafe fn create(real: *mut c_void, config: Config) -> *mut c_void {
     D3D9_CONFIG = Some(config);
     patch_vtable(real);
-    OutputDebugStringA(b"[d3d9proxy] create() called, vtable patched\0".as_ptr());
+    OutputDebugStringA(c"[d3d9proxy] create() called, vtable patched".as_ptr().cast());
     real
 }
 
@@ -29,7 +29,7 @@ unsafe fn patch_vtable(obj: *mut c_void) {
         0x40, // PAGE_EXECUTE_READWRITE
         &mut old_protect,
     );
-    *slot = hooked_create_device as usize;
+    *slot = hooked_create_device as *const () as usize;
     let mut ignored = 0u32;
     VirtualProtect(
         slot.cast(),
@@ -49,7 +49,7 @@ unsafe extern "system" fn hooked_create_device(
     present_params: *mut c_void,
     returned_device: *mut *mut c_void,
 ) -> i32 {
-    OutputDebugStringA(b"[d3d9proxy] hooked_create_device ENTERED\0".as_ptr());
+        OutputDebugStringA(c"[d3d9proxy] hooked_create_device ENTERED".as_ptr().cast());
 
     let orig: unsafe extern "system" fn(
         *mut c_void, u32, u32, usize, u32, *mut c_void, *mut *mut c_void,
@@ -58,13 +58,14 @@ unsafe extern "system" fn hooked_create_device(
     let hr = orig(this, adapter, device_type, focus_window, behavior_flags, present_params, returned_device);
 
     if hr >= 0 && !returned_device.is_null() && !(*returned_device).is_null() {
-        OutputDebugStringA(b"[d3d9proxy] CreateDevice OK, patching device\0".as_ptr());
+        OutputDebugStringA(c"[d3d9proxy] CreateDevice OK, patching device".as_ptr().cast());
         device_wrapper::GAME_HWND = focus_window;
-        if let Some(cfg) = &D3D9_CONFIG {
+        let cfg_ptr = &raw const D3D9_CONFIG;
+        if let Some(cfg) = unsafe { &*cfg_ptr } {
             device_wrapper::patch(*returned_device, cfg.clone());
         }
     } else {
-        OutputDebugStringA(b"[d3d9proxy] CreateDevice FAILED\0".as_ptr());
+        OutputDebugStringA(c"[d3d9proxy] CreateDevice FAILED".as_ptr().cast());
     }
 
     hr
