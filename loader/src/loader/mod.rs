@@ -14,7 +14,7 @@ use std::fs::File;
 
 use windows_sys::Win32::Foundation::GetLastError;
 use windows_sys::Win32::System::Console::{
-    AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS, STD_OUTPUT_HANDLE,
+    AttachConsole, GetStdHandle, SetConsoleOutputCP, ATTACH_PARENT_PROCESS, STD_OUTPUT_HANDLE,
 };
 use windows_sys::Win32::System::LibraryLoader::{
     GetModuleHandleA, GetProcAddress, LoadLibraryA,
@@ -51,6 +51,7 @@ pub unsafe fn load_mods() {
         AttachConsole(ATTACH_PARENT_PROCESS);
         state.console = GetStdHandle(STD_OUTPUT_HANDLE);
     }
+    SetConsoleOutputCP(65001);
 
     let base_dir = match get_self_base_dir() {
         Some(d) => d,
