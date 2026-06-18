@@ -20,7 +20,7 @@ extern "C" {
 #define CHUMOD_API __declspec(dllexport)
 
 /** Current ABI version / 当前 ABI 版本。 */
-#define CHUMOD_API_VERSION 3
+#define CHUMOD_API_VERSION 4
 
 /**
  * @brief Runtime information passed to chumod_init.
@@ -45,8 +45,6 @@ typedef struct {
     uintptr_t rdata_base;
     /** .rdata section virtual size / .rdata 节虚拟大小。 */
     uint32_t rdata_size;
-    /** Game FileVersion/ProductVersion from PE resource / PE 资源中的游戏版本。 */
-    const char* game_version;
 } ChuModInfo;
 
 /** @brief Write formatted text to loader log. / 写入格式化文本到 loader 日志。 */
@@ -125,6 +123,21 @@ typedef const char* (*ChuModGetManifestPathFunc)(void);
 /** @brief Reload a loaded mod by display name, file name, or file stem. Returns 0 on success. / 按显示名、文件名或文件 stem 热重载已加载 mod，0 表示成功。 */
 typedef int (*ChuModReloadModFunc)(const char* mod_name);
 
+/** @brief Per-frame Present callback; param is native IDirect3DDevice9*. / 每帧 Present 回调，参数为原生 IDirect3DDevice9*。 */
+typedef void (*ChuModPresentCallback)(void* device);
+/** @brief Device Reset event; phase 0 = before reset (release D3DPOOL_DEFAULT), 1 = after reset (recreate). / 设备 Reset 事件，phase 0 = Reset 前（释放 D3DPOOL_DEFAULT），1 = Reset 后（重建）。 */
+typedef void (*ChuModResetCallback)(void* device, uint32_t phase);
+/** @brief Register Present callback, NULL to clear. Returns 0 on success. / 注册 Present 回调，传 NULL 清除，0 表示成功。 */
+typedef int (*ChuModRegisterPresentCallbackFunc)(ChuModPresentCallback callback);
+/** @brief Register Reset callback, NULL to clear. Returns 0 on success. / 注册 Reset 回调，传 NULL 清除，0 表示成功。 */
+typedef int (*ChuModRegisterResetCallbackFunc)(ChuModResetCallback callback);
+/** @brief Lock render frame rate to fps (0 = unlock). Returns 0 on success. / 锁定渲染帧率为 fps（0 表示解锁），0 表示成功。 */
+typedef int (*ChuModSetFrameLockFunc)(uint32_t fps);
+/** @brief Get current IDirect3DDevice9*, or NULL if unavailable. / 获取当前 IDirect3DDevice9*，不可用返回 NULL。 */
+typedef void* (*ChuModGetD3D9DeviceFunc)(void);
+/** @brief Get game window HWND as uintptr_t, or 0 if unavailable. / 获取游戏窗口 HWND（uintptr_t），不可用返回 0。 */
+typedef uintptr_t (*ChuModGetGameHwndFunc)(void);
+
 /**
  * @brief API function table provided by loader.
  * @brief Loader 提供给 mod 的 API 函数表。
@@ -190,6 +203,13 @@ typedef struct {
 
     /** v3: hot reload API / v3: 热重载 API。 */
     ChuModReloadModFunc reload_mod;
+
+    /** v4: d3d9 service APIs / v4: d3d9 服务 API。 */
+    ChuModRegisterPresentCallbackFunc register_present_callback;
+    ChuModRegisterResetCallbackFunc register_reset_callback;
+    ChuModSetFrameLockFunc set_frame_lock;
+    ChuModGetD3D9DeviceFunc get_d3d9_device;
+    ChuModGetGameHwndFunc get_game_hwnd;
 } ChuModAPI;
 
 /**
@@ -245,7 +265,6 @@ typedef const char* (*ChuModMinLoaderVersionFunc)(void);
                 g_chumod_fallback_info.loader_version = "standalone"; \
                 g_chumod_fallback_info.game_module = "chusanApp.exe"; \
                 g_chumod_fallback_info.game_base = (uintptr_t)game; \
-                g_chumod_fallback_info.game_version = ""; \
                 PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)game; \
                 PIMAGE_NT_HEADERS nt = (PIMAGE_NT_HEADERS)((uintptr_t)game + dos->e_lfanew); \
                 g_chumod_fallback_info.game_size = nt->OptionalHeader.SizeOfImage; \

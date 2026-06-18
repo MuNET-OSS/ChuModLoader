@@ -3,41 +3,38 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::mem::{size_of, zeroed};
 use std::ptr::{null, null_mut};
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use windows_sys::Win32::Foundation::{BOOL, HANDLE, MAX_PATH};
-use windows_sys::Win32::Storage::FileSystem::CREATE_ALWAYS;
+use windows_sys::Win32::Foundation::{HANDLE, MAX_PATH};
 use windows_sys::Win32::System::Diagnostics::Debug::{
-    AddrModeFlat, MiniDumpNormal, MiniDumpWriteDump, StackWalk, SymCleanup, SymFromAddr,
-    SymFunctionTableAccess, SymGetModuleBase, SymInitialize, EXCEPTION_POINTERS,
-    MINIDUMP_EXCEPTION_INFORMATION, STACKFRAME, SYMBOL_INFO,
+    AddrModeFlat, StackWalk, SymCleanup, SymFromAddr, SymFunctionTableAccess, SymGetModuleBase,
+    SymInitialize, EXCEPTION_POINTERS, STACKFRAME, SYMBOL_INFO,
 };
 use windows_sys::Win32::System::ProcessStatus::{GetModuleBaseNameA, GetModuleInformation, MODULEINFO};
-use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetCurrentProcessId, GetCurrentThread, GetCurrentThreadId};
+use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread};
 
 use super::log::{log_error, log_info};
 use super::pe::get_self_base_dir;
+use super::{crash_ui, crash_zip};
 
 const EXCEPTION_EXECUTE_HANDLER: i32 = 1;
-const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
-const GENERIC_WRITE: u32 = 0x40000000;
+const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
 const IMAGE_FILE_MACHINE_I386: u32 = 0x014c;
+
+const EXCEPTION_STACK_OVERFLOW: u32 = 0xC00000FD;
+
+static CRASH_HANDLING: AtomicBool = AtomicBool::new(false);
 
 extern "system" {
     fn CreateDirectoryA(path: *const u8, security: *const c_void) -> i32;
-    fn CreateFileA(
-        name: *const u8,
-        access: u32,
-        share: u32,
-        security: *const c_void,
-        disposition: u32,
-        flags: u32,
-        template: *mut c_void,
-    ) -> HANDLE;
-    fn CloseHandle(handle: HANDLE) -> BOOL;
     fn GetLocalTime(st: *mut SYSTEMTIME);
     fn SetUnhandledExceptionFilter(
         filter: Option<unsafe extern "system" fn(*mut EXCEPTION_POINTERS) -> i32>,
     ) -> Option<unsafe extern "system" fn(*mut EXCEPTION_POINTERS) -> i32>;
+    fn AddVectoredExceptionHandler(
+        first: u32,
+        handler: unsafe extern "system" fn(*mut EXCEPTION_POINTERS) -> i32,
+    ) -> *mut c_void;
 }
 
 #[repr(C)]
@@ -56,110 +53,120 @@ struct SYSTEMTIME {
 type NativeContext = windows_sys::Win32::System::Diagnostics::Debug::CONTEXT;
 
 pub unsafe fn install() {
+    // VEH（first=1，最高优先级）：异常分发最早期捕获，不会被游戏/第三方 DLL 后装的
+    // UEF 顶掉，覆盖游戏本体与其他环境的致命崩溃
+    AddVectoredExceptionHandler(1, vectored_handler);
+    // UEF 作为第二道防线，兜底 VEH 放行的未处理异常
     SetUnhandledExceptionFilter(Some(unhandled_exception_filter));
-    log_info("crash dump handler installed");
+    log_info("crash handler installed (VEH + UEF)");
 }
 
-unsafe extern "system" fn unhandled_exception_filter(exception: *mut EXCEPTION_POINTERS) -> i32 {
-    if let Err(err) = write_crash_report(exception) {
-        log_error(&format!("failed to write crash dump: {}", err));
+/// 仅对明确致命的异常码弹崩溃窗口；放行 C++ 异常 / 断点 / 普通 first-chance，
+/// 避免误杀游戏正常的 __try/__except 流程
+unsafe extern "system" fn vectored_handler(exception: *mut EXCEPTION_POINTERS) -> i32 {
+    if exception.is_null() || (*exception).ExceptionRecord.is_null() {
+        return EXCEPTION_CONTINUE_SEARCH;
     }
+    let record = &*(*exception).ExceptionRecord;
+    let code = record.ExceptionCode as u32;
+
+    // STACK_OVERFLOW 必须由 VEH 处理：UEF 在栈耗尽时无法可靠运行。
+    // 其余致命码放行给 UEF（last-chance 语义，确保确实无人处理才弹），
+    // 这样不会误杀游戏 first-chance 后自行恢复的 SEH。
+    if code != EXCEPTION_STACK_OVERFLOW {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    if CRASH_HANDLING.swap(true, Ordering::SeqCst) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    handle_crash(exception);
     EXCEPTION_EXECUTE_HANDLER
 }
 
-unsafe fn write_crash_report(exception: *mut EXCEPTION_POINTERS) -> Result<(), String> {
-    let base_dir = get_self_base_dir().ok_or_else(|| "cannot resolve base dir".to_string())?;
+unsafe extern "system" fn unhandled_exception_filter(exception: *mut EXCEPTION_POINTERS) -> i32 {
+    if CRASH_HANDLING.swap(true, Ordering::SeqCst) {
+        return EXCEPTION_EXECUTE_HANDLER;
+    }
+    handle_crash(exception);
+    EXCEPTION_EXECUTE_HANDLER
+}
+
+unsafe fn handle_crash(exception: *mut EXCEPTION_POINTERS) {
+    let report = build_crash_text(exception);
+    log_error("game crashed Nya... (>_<)");
+    for line in report.lines() {
+        log_error(line);
+    }
+
+    let base_dir = get_self_base_dir().unwrap_or_default();
     let crash_dir = format!("{}\\mods\\crash", base_dir);
     CreateDirectoryA(format!("{}\\mods\0", base_dir).as_ptr(), null());
     CreateDirectoryA(format!("{}\0", crash_dir).as_ptr(), null());
 
     let stamp = timestamp();
-    let dump_path = format!("{}\\crash_{}.dmp", crash_dir, stamp);
     let log_path = format!("{}\\crash_{}.log", crash_dir, stamp);
-
-    write_minidump(&dump_path, exception)?;
-    write_text_log(&log_path, exception, &dump_path)?;
-    log_error(&format!("crash dump written: {}", dump_path));
-    Ok(())
-}
-
-unsafe fn write_minidump(path: &str, exception: *mut EXCEPTION_POINTERS) -> Result<(), String> {
-    let path_c = format!("{}\0", path);
-    let file = CreateFileA(
-        path_c.as_ptr(),
-        GENERIC_WRITE,
-        0,
-        null(),
-        CREATE_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL,
-        null_mut(),
-    );
-    if file == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
-        return Err(format!("CreateFileA failed for {}", path));
+    if let Ok(mut file) = File::create(&log_path) {
+        let _ = file.write_all(report.as_bytes());
     }
 
-    let exception_info = MINIDUMP_EXCEPTION_INFORMATION {
-        ThreadId: GetCurrentThreadId(),
-        ExceptionPointers: exception,
-        ClientPointers: 0,
-    };
-    let ok = MiniDumpWriteDump(
-        GetCurrentProcess(),
-        GetCurrentProcessId(),
-        file,
-        MiniDumpNormal,
-        &exception_info,
-        null_mut(),
-        null_mut(),
-    );
-    CloseHandle(file);
-    if ok == 0 {
-        return Err("MiniDumpWriteDump failed".to_string());
-    }
-    Ok(())
+    let zip_path = crash_zip::build(&base_dir, &crash_dir, &stamp, &log_path);
+
+    crash_ui::show(&report, &crash_dir, zip_path.as_deref());
 }
 
-unsafe fn write_text_log(path: &str, exception: *mut EXCEPTION_POINTERS, dump_path: &str) -> Result<(), String> {
-    let mut file = File::create(path).map_err(|err| err.to_string())?;
-    writeln!(file, "ChuModLoader crash report").map_err(|err| err.to_string())?;
-    writeln!(file, "dump: {}", dump_path).map_err(|err| err.to_string())?;
+unsafe fn build_crash_text(exception: *mut EXCEPTION_POINTERS) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let _ = writeln!(out, "=== Chusan Crash Report Nya... (>_<) ===");
+    let _ = writeln!(out);
 
     if exception.is_null() || (*exception).ExceptionRecord.is_null() {
-        writeln!(file, "exception: <null>").map_err(|err| err.to_string())?;
-        return Ok(());
+        let _ = writeln!(out, "exception: <null> (unknown reason Nya...)");
+        return out;
     }
 
     let record = &*(*exception).ExceptionRecord;
-    writeln!(file, "exception_code: 0x{:08X}", record.ExceptionCode).map_err(|err| err.to_string())?;
-    writeln!(file, "exception_address: 0x{:08X}", record.ExceptionAddress as usize).map_err(|err| err.to_string())?;
+    let code = record.ExceptionCode as u32;
+    let _ = writeln!(out, "exception_code: 0x{:08X} ({})", code, exception_name(code));
+    let _ = writeln!(out, "exception_address: 0x{:08X}", record.ExceptionAddress as usize);
     if let Some(module) = module_offset(record.ExceptionAddress as usize) {
-        writeln!(file, "exception_module: {}+0x{:X}", module.0, module.1).map_err(|err| err.to_string())?;
+        let _ = writeln!(out, "exception_module: {}+0x{:X}", module.0, module.1);
     }
 
     #[cfg(target_arch = "x86")]
     if !(*exception).ContextRecord.is_null() {
-        write_registers(&mut file, &*((*exception).ContextRecord as *const NativeContext))?;
-        write_stack_trace(&mut file, &mut *((*exception).ContextRecord as *mut NativeContext))?;
+        append_registers(&mut out, &*((*exception).ContextRecord as *const NativeContext));
+        append_stack_trace(&mut out, &mut *((*exception).ContextRecord as *mut NativeContext));
     }
 
-    #[cfg(not(target_arch = "x86"))]
-    writeln!(file, "registers/stack: unsupported target arch").map_err(|err| err.to_string())?;
+    out
+}
 
-    Ok(())
+fn exception_name(code: u32) -> &'static str {
+    match code {
+        0xC0000005 => "ACCESS_VIOLATION",
+        0xC000001D => "ILLEGAL_INSTRUCTION",
+        0xC0000094 => "INT_DIVIDE_BY_ZERO",
+        0xC00000FD => "STACK_OVERFLOW",
+        0x80000003 => "BREAKPOINT",
+        0xC0000025 => "NONCONTINUABLE_EXCEPTION",
+        _ => "unknown",
+    }
 }
 
 #[cfg(target_arch = "x86")]
-fn write_registers(file: &mut File, ctx: &NativeContext) -> Result<(), String> {
-    writeln!(file, "registers:").map_err(|err| err.to_string())?;
-    writeln!(file, "  EAX=0x{:08X} EBX=0x{:08X} ECX=0x{:08X} EDX=0x{:08X}", ctx.Eax, ctx.Ebx, ctx.Ecx, ctx.Edx).map_err(|err| err.to_string())?;
-    writeln!(file, "  ESI=0x{:08X} EDI=0x{:08X} EBP=0x{:08X} ESP=0x{:08X}", ctx.Esi, ctx.Edi, ctx.Ebp, ctx.Esp).map_err(|err| err.to_string())?;
-    writeln!(file, "  EIP=0x{:08X} EFLAGS=0x{:08X}", ctx.Eip, ctx.EFlags).map_err(|err| err.to_string())?;
-    Ok(())
+fn append_registers(out: &mut String, ctx: &NativeContext) {
+    use std::fmt::Write as _;
+    let _ = writeln!(out, "\nregisters:");
+    let _ = writeln!(out, "  EAX=0x{:08X} EBX=0x{:08X} ECX=0x{:08X} EDX=0x{:08X}", ctx.Eax, ctx.Ebx, ctx.Ecx, ctx.Edx);
+    let _ = writeln!(out, "  ESI=0x{:08X} EDI=0x{:08X} EBP=0x{:08X} ESP=0x{:08X}", ctx.Esi, ctx.Edi, ctx.Ebp, ctx.Esp);
+    let _ = writeln!(out, "  EIP=0x{:08X} EFLAGS=0x{:08X}", ctx.Eip, ctx.EFlags);
 }
 
 #[cfg(target_arch = "x86")]
-unsafe fn write_stack_trace(file: &mut File, ctx: &mut NativeContext) -> Result<(), String> {
-    writeln!(file, "stack_trace:").map_err(|err| err.to_string())?;
+unsafe fn append_stack_trace(out: &mut String, ctx: &mut NativeContext) {
+    use std::fmt::Write as _;
+    let _ = writeln!(out, "\nstack_trace:");
     let process = GetCurrentProcess();
     let thread = GetCurrentThread();
     SymInitialize(process, null(), 1);
@@ -188,12 +195,12 @@ unsafe fn write_stack_trace(file: &mut File, ctx: &mut NativeContext) -> Result<
             break;
         }
         let addr = frame.AddrPC.Offset;
-        let symbol = symbol_from_addr(process, addr as u64).unwrap_or_else(|| module_offset(addr as usize).map(|(m, o)| format!("{}+0x{:X}", m, o)).unwrap_or_else(|| "<unknown>".to_string()));
-        writeln!(file, "  #{:02} 0x{:08X} {}", index, addr as u32, symbol).map_err(|err| err.to_string())?;
+        let symbol = symbol_from_addr(process, addr as u64)
+            .unwrap_or_else(|| module_offset(addr as usize).map(|(m, o)| format!("{}+0x{:X}", m, o)).unwrap_or_else(|| "<unknown>".to_string()));
+        let _ = writeln!(out, "  #{:02} 0x{:08X} {}", index, addr as u32, symbol);
     }
 
     SymCleanup(process);
-    Ok(())
 }
 
 #[cfg(target_arch = "x86")]
@@ -264,11 +271,15 @@ pub fn log_panic_context(scope: &str, name: &str) {
     }
     let crash_dir = format!("{}\\mods\\crash", base_dir);
     let _ = fs::create_dir_all(&crash_dir);
-    let path = format!("{}\\panic_{}.log", crash_dir, unsafe { timestamp() });
+    let stamp = unsafe { timestamp() };
+    let path = format!("{}\\panic_{}.log", crash_dir, stamp);
+    let report = format!(
+        "=== Chusan Panic Nya... (>_<) ===\n\nscope: {}\nmod:   {}\n",
+        scope, name
+    );
     if let Ok(mut file) = File::create(&path) {
-        let _ = writeln!(file, "ChuModLoader panic context");
-        let _ = writeln!(file, "scope: {}", scope);
-        let _ = writeln!(file, "mod: {}", name);
+        let _ = file.write_all(report.as_bytes());
     }
     log_error(&format!("panic caught in {}: {} (context={})", scope, name, path));
+    crash_ui::show(&report, &crash_dir, None);
 }

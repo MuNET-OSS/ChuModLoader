@@ -9,15 +9,16 @@ use windows_sys::Win32::Foundation::{GetLastError, HANDLE};
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress, LoadLibraryA};
 use windows_sys::Win32::System::Threading::Sleep;
 
-use crate::api_impl;
-use crate::types::{
+use chu_abi::{
     ChuModFrameFunc, ChuModInfo, ChuModInitFunc, ChuModNameFunc, ChuModReadyFunc,
     ChuModShutdownFunc, CHUMOD_API_VERSION,
 };
 
+use crate::api_impl;
+
 use super::frame_hook;
 use super::log::{log_error, log_info, log_warn};
-use super::pe::{parse_game_info, read_game_version};
+use super::pe::parse_game_info;
 use super::seh::{call_mod_init, call_mod_on_ready, call_mod_shutdown};
 use super::state::{LoadedMod, STATE};
 
@@ -255,8 +256,6 @@ unsafe fn call_reloaded_init(
     } else {
         (0, 0, 0, 0, 0)
     };
-    let game_version = read_game_version(&base_dir).unwrap_or_default();
-    let game_version_c = CString::new(game_version).unwrap_or_default();
     let loader_ver = concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const c_char;
     let info = ChuModInfo {
         api_version: CHUMOD_API_VERSION,
@@ -272,7 +271,6 @@ unsafe fn call_reloaded_init(
         text_size,
         rdata_base,
         rdata_size,
-        game_version: game_version_c.as_ptr(),
     };
 
     let mod_stem = file_stem(file_name);

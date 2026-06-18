@@ -7,7 +7,7 @@ mod manifest;
 mod memory;
 mod rtti;
 
-use crate::types::ChuModAPI;
+use chu_abi::ChuModAPI;
 
 pub use config_ini::set_current_config;
 pub use config_toml::load_current_config as load_current_toml_config;
@@ -49,6 +49,11 @@ static mut G_API: ChuModAPI = ChuModAPI {
     toml_get_string: None,
     get_manifest_path: None,
     reload_mod: None,
+    register_present_callback: None,
+    register_reset_callback: None,
+    set_frame_lock: None,
+    get_d3d9_device: None,
+    get_game_hwnd: None,
 };
 
 fn make_api() -> ChuModAPI {
@@ -87,6 +92,11 @@ fn make_api() -> ChuModAPI {
         toml_get_string: Some(config_toml::api_toml_get_string),
         get_manifest_path: Some(manifest::api_get_manifest_path),
         reload_mod: Some(crate::loader::hot_reload::api_reload_mod),
+        register_present_callback: Some(crate::d3d9::api_register_present_callback),
+        register_reset_callback: Some(crate::d3d9::api_register_reset_callback),
+        set_frame_lock: Some(crate::d3d9::api_set_frame_lock),
+        get_d3d9_device: Some(crate::d3d9::api_get_d3d9_device),
+        get_game_hwnd: Some(crate::d3d9::api_get_game_hwnd),
     }
 }
 

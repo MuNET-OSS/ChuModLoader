@@ -2,7 +2,7 @@ use std::ffi::CStr;
 
 use windows_sys::Win32::System::LibraryLoader::GetProcAddress;
 
-use crate::types::{ChuModStringFunc, LOADER_VERSION};
+use chu_abi::{ChuModStringFunc, LOADER_VERSION};
 
 use super::log::log_info;
 use super::state::HMODULE;

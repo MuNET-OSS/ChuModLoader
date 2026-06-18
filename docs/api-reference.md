@@ -1,22 +1,36 @@
-# ChuModLoader API Reference (v3.0.0)
+# ChuModLoader API 参考（v4.0.0）
 
-This document describes the C ABI exposed by ChuModLoader v3.0.0. The ABI is intentionally append-only: older mods continue to work, and newer mods should check `ChuModAPI::struct_size` before using fields added after their target version.
+本文档描述 ChuModLoader v4.0.0 向 Mod 提供的 C ABI。该 ABI 采用「只追加字段」的兼容策略：旧 Mod 可以继续工作，新 Mod 在使用较新字段前应检查 `ChuModAPI::struct_size`。
 
-For C/C++ projects, include `include/chumod.h`. Rust or other languages should mirror the same `#[repr(C)]` layouts and `extern "C"` function signatures.
+C/C++ 项目请包含 `include/chumod.h`。Rust Mod 需要镜像相同的 `#[repr(C)]` 内存布局和 `extern "C"` 函数签名。
 
-## Constants
+## 目录
+
+- [常量](#常量)
+- [`ChuModInfo`](#chumodinfo)
+- [`ChuModAPI`](#chumodapi)
+  - [兼容性检查](#兼容性检查)
+- [v1 API](#v1-api)
+- [v2 API](#v2-api)
+- [v2.5 API](#v25-api)
+- [v3 API](#v3-api)
+- [v4 API](#v4-api)
+- [Mod 导出函数](#mod-导出函数)
+- [`CHUMOD_DUAL_MODE`](#chumod_dual_mode)
+
+## 常量
 
 ```c
 #define CHUMOD_API __declspec(dllexport)
-#define CHUMOD_API_VERSION 3
+#define CHUMOD_API_VERSION 4
 ```
 
-- `CHUMOD_API` marks functions exported by a mod DLL.
-- `CHUMOD_API_VERSION` is the loader ABI version reported in `ChuModInfo::api_version`.
+- `CHUMOD_API`：标记 Mod DLL 导出的函数。
+- `CHUMOD_API_VERSION`：Loader 的 ABI 版本，会通过 `ChuModInfo::api_version` 报告。
 
 ## `ChuModInfo`
 
-Runtime information passed to `chumod_init`.
+`chumod_init` 接收的运行时信息。
 
 ```c
 typedef struct {
@@ -29,26 +43,24 @@ typedef struct {
     uint32_t text_size;
     uintptr_t rdata_base;
     uint32_t rdata_size;
-    const char* game_version;
 } ChuModInfo;
 ```
 
-| Field | Description |
+| 字段 | 说明 |
 | --- | --- |
-| `api_version` | Loader ABI version. v3.0.0 reports `CHUMOD_API_VERSION` (`3`). |
-| `loader_version` | Loader package version string, e.g. `"3.0.0"`. |
-| `game_module` | Game executable module name, usually `"chusanApp.exe"`; may be `NULL`. |
-| `game_base` | Base address of the game image, or `0` if the module was not found. |
-| `game_size` | Size of the game image in bytes. |
-| `text_base` | Base address of the game `.text` section. |
-| `text_size` | Virtual size of the `.text` section in bytes. |
-| `rdata_base` | Base address of the game `.rdata` section. |
-| `rdata_size` | Virtual size of the `.rdata` section in bytes. |
-| `game_version` | FileVersion/ProductVersion read from the game PE resources; empty string if unavailable. |
+| `api_version` | Loader 的 ABI 版本。v4.0.0 为 `CHUMOD_API_VERSION`（`4`）。 |
+| `loader_version` | Loader 包版本字符串，例如 `"1.0.0"`。 |
+| `game_module` | 游戏主程序模块名，通常为 `"chusanApp.exe"`；可能为 `NULL`。 |
+| `game_base` | 游戏镜像基址，找不到模块时为 `0`。 |
+| `game_size` | 游戏镜像大小（字节）。 |
+| `text_base` | 游戏 `.text` 节基址。 |
+| `text_size` | `.text` 节虚拟大小（字节）。 |
+| `rdata_base` | 游戏 `.rdata` 节基址。 |
+| `rdata_size` | `.rdata` 节虚拟大小（字节）。 |
 
 ## `ChuModAPI`
 
-Function table provided to mods. The loader sets `struct_size = sizeof(ChuModAPI)` for its build.
+Loader 提供给 Mod 的函数表。Loader 会按自身构建设置 `struct_size = sizeof(ChuModAPI)`。
 
 ```c
 typedef struct {
@@ -94,43 +106,54 @@ typedef struct {
 
     /* v3 */
     ChuModReloadModFunc reload_mod;
+
+    /* v4 */
+    ChuModRegisterPresentCallbackFunc register_present_callback;
+    ChuModRegisterResetCallbackFunc register_reset_callback;
+    ChuModSetFrameLockFunc set_frame_lock;
+    ChuModGetD3D9DeviceFunc get_d3d9_device;
+    ChuModGetGameHwndFunc get_game_hwnd;
 } ChuModAPI;
 ```
 
-### Compatibility check
+> 函数表中的字段按引入版本分组，且只在末尾追加。这样旧 Mod 看到的前半部分布局始终不变，新增字段不会破坏二进制兼容性。
+
+### 兼容性检查
+
+使用某个版本新增的字段前，先用 `struct_size` 判断 Loader 是否真的提供了它，再检查指针非空：
 
 ```c
 #include <stddef.h>
 
 if (api->struct_size >= offsetof(ChuModAPI, log_info) + sizeof(api->log_info) && api->log_info) {
-    api->log_info("v2.5 logging is available");
+    api->log_info("v2.5 日志可用");
 }
 ```
 
 ## v1 API
 
-### Logging
+### 日志
 
 ```c
 typedef void (*ChuModLogFunc)(const char* fmt, ...);
 void log(const char* fmt, ...);
 ```
 
-Writes a formatted message to `chusan_loader.log` and the console if attached.
+写入格式化日志到 `chumod_loader.log`，控制台可用时也输出到控制台。
 
-Parameters:
-- `fmt`: `printf`-style format string.
-- `...`: values referenced by `fmt`.
+参数：
+- `fmt`：`printf` 风格格式串。
+- `...`：格式串引用的值。
 
-Return value: none.
+返回值：无。
 
-Example:
+示例：
 
 ```c
-api->log("%s loaded at 0x%08X", "MyMod", (unsigned)info->game_base);
+api->log("%s 已加载，基址 0x%08X", "MyMod", (unsigned)info->game_base);
 ```
 
-### AOB scan
+### AOB 扫描
 
 ```c
 typedef uintptr_t (*ChuModAobScanFunc)(
@@ -142,24 +165,24 @@ typedef uintptr_t (*ChuModAobScanFunc)(
 uintptr_t aob_scan(uintptr_t start, uint32_t size, const uint8_t* pattern, const char* mask);
 ```
 
-Scans memory for a byte pattern. In `mask`, `x` means exact match and `?` means wildcard.
+按字节特征扫描内存。`mask` 中 `x` 表示精确匹配，`?` 表示通配。
 
-Parameters:
-- `start`: start address.
-- `size`: bytes to scan.
-- `pattern`: byte pattern.
-- `mask`: mask string with the same length as `pattern`.
+参数：
+- `start`：起始地址。
+- `size`：扫描字节数。
+- `pattern`：字节模式。
+- `mask`：与 `pattern` 等长的掩码字符串。
 
-Return value: matched address, or `0` if not found or arguments are invalid.
+返回值：匹配地址；找不到或参数无效时返回 `0`。
 
-Example:
+示例：
 
 ```c
 uint8_t pat[] = { 0x8B, 0x45, 0x00, 0x89 };
 uintptr_t addr = api->aob_scan(info->text_base, info->text_size, pat, "xx?x");
 ```
 
-### Memory access
+### 内存访问
 
 ```c
 typedef int (*ChuModMemReadFunc)(uintptr_t addr, void* buf, uint32_t size);
@@ -171,17 +194,17 @@ int mem_write(uintptr_t addr, const void* buf, uint32_t size);
 int mem_fill(uintptr_t addr, uint8_t value, uint32_t size);
 ```
 
-Reads, writes, or fills process memory. The loader temporarily adjusts page protection where needed.
+读取、写入或填充进程内存。Loader 会按需临时调整页面保护属性。
 
-Parameters:
-- `addr`: target address.
-- `buf`: source/destination buffer for read/write.
-- `value`: byte used by `mem_fill`.
-- `size`: number of bytes.
+参数：
+- `addr`：目标地址。
+- `buf`：读写缓冲区。
+- `value`：`mem_fill` 使用的填充值。
+- `size`：字节数。
 
-Return value: `0` on success, non-zero on failure.
+返回值：成功为 `0`，失败为非 `0`。
 
-Example:
+示例：
 
 ```c
 uint8_t nop = 0x90;
@@ -189,7 +212,7 @@ api->mem_write(address, &nop, 1);
 api->mem_fill(address + 1, 0x90, 5);
 ```
 
-### Inline hooks
+### Inline Hook
 
 ```c
 typedef int (*ChuModHookCreateFunc)(void* target, void* detour, void** original);
@@ -203,16 +226,16 @@ int hook_disable(void* target);
 int hook_remove(void* target);
 ```
 
-Creates and controls inline hooks. `original` receives a trampoline pointer when provided.
+创建并控制 inline hook。传入 `original` 时可获得 trampoline 指针，用于调用原始函数。
 
-Parameters:
-- `target`: function address to hook.
-- `detour`: replacement function.
-- `original`: optional out-parameter for trampoline.
+参数：
+- `target`：要 hook 的函数地址。
+- `detour`：替换函数。
+- `original`：可选输出参数，用于接收 trampoline。
 
-Return value: `0` on success, non-zero on failure.
+返回值：成功为 `0`，失败为非 `0`。
 
-Example:
+示例：
 
 ```c
 typedef int (__stdcall *TargetFn)(int);
@@ -226,7 +249,7 @@ api->hook_create((void*)target_addr, (void*)my_target, (void**)&real_target);
 api->hook_enable((void*)target_addr);
 ```
 
-### Inter-mod IPC
+### Mod 间通信
 
 ```c
 typedef int (*ChuModRegisterServiceFunc)(const char* name, void* service_ptr);
@@ -241,13 +264,13 @@ int publish(const char* topic, void* data, uint32_t size);
 int subscribe(const char* topic, ChuModMessageCallback callback);
 ```
 
-Provides simple service lookup and topic-based messaging between loaded mods.
+提供简单的命名服务查找，以及基于 topic 的消息发布 / 订阅，用于 Mod 之间通信。
 
-Return values:
-- `register_service`, `publish`, `subscribe`: `0` on success.
-- `get_service`: registered pointer, or `NULL` if missing.
+返回值：
+- `register_service`、`publish`、`subscribe`：成功为 `0`。
+- `get_service`：注册过的指针，不存在时为 `NULL`。
 
-Example:
+示例：
 
 ```c
 static void on_msg(const char* topic, void* data, uint32_t size) {
@@ -263,27 +286,27 @@ api->publish("example.ready", NULL, 0);
 
 ## v2 API
 
-### RTTI helper
+### RTTI 辅助
 
 ```c
 typedef uintptr_t (*ChuModRttiFindVtableFunc)(const char* rtti_class_name);
 uintptr_t rtti_find_vtable(const char* rtti_class_name);
 ```
 
-Finds an MSVC RTTI vtable by class name inside the game image.
+在游戏镜像中按 MSVC RTTI 类名查找 vtable。
 
-Parameters:
-- `rtti_class_name`: decorated or plain class name to search for.
+参数：
+- `rtti_class_name`：要查找的装饰名或普通类名。
 
-Return value: vtable address, or `0` if not found.
+返回值：vtable 地址；找不到时为 `0`。
 
-Example:
+示例：
 
 ```c
 uintptr_t vt = api->rtti_find_vtable("SomeGameClass");
 ```
 
-### INI configuration
+### INI 配置
 
 ```c
 int config_get_int(const char* key, int default_val);
@@ -296,14 +319,14 @@ int config_set_bool(const char* key, int value);
 int config_set_string(const char* key, const char* value);
 ```
 
-Reads and writes per-mod INI configuration under `mods/config/<mod_name>.ini`, using the `[config]` section.
+读写 `mods/config/<mod_name>.ini` 下的单 Mod INI 配置，使用 `[config]` section。
 
-Return values:
-- Getters return the parsed value or the default.
-- `config_get_string` writes into `buf` and returns written length.
-- Setters return `0` on success.
+返回值：
+- getter 返回解析值或默认值。
+- `config_get_string` 写入 `buf` 并返回写入长度。
+- setter 成功返回 `0`。
 
-Example:
+示例：
 
 ```c
 int enabled = api->config_get_bool("enabled", 1);
@@ -314,7 +337,7 @@ api->config_set_int("launch_count", 42);
 
 ## v2.5 API
 
-### Leveled logging
+### 分级日志
 
 ```c
 typedef void (*ChuModLogPlainFunc)(const char* message);
@@ -323,30 +346,30 @@ void log_warn(const char* message);
 void log_error(const char* message);
 ```
 
-Writes plain text at INFO/WARN/ERROR levels. These are safer than variadic logging when crossing languages.
+按 INFO / WARN / ERROR 级别写入纯文本日志。跨语言调用时比 variadic 日志更安全。
 
-Parameters:
-- `message`: null-terminated UTF-8/ANSI text.
+参数：
+- `message`：以 `\0` 结尾的 UTF-8 / ANSI 文本。
 
-Return value: none.
+返回值：无。
 
-Example:
+示例：
 
 ```c
-api->log_info("configuration loaded");
-api->log_warn("optional pattern not found");
-api->log_error("required hook failed");
+api->log_info("配置已加载");
+api->log_warn("可选特征未找到");
+api->log_error("必需的 hook 失败");
 ```
 
-### Per-mod log path
+### 单 Mod 日志路径
 
 ```c
 const char* log_path;
 ```
 
-Path to the current mod log file, usually `mods/log/<mod_name>.log`. It may be `NULL` when unavailable.
+当前 Mod 的日志文件路径，通常为 `mods/log/<mod_name>.log`。不可用时可能为 `NULL`。
 
-Example:
+示例：
 
 ```c
 if (api->log_path) {
@@ -354,7 +377,7 @@ if (api->log_path) {
 }
 ```
 
-### TOML configuration
+### TOML 配置
 
 ```c
 int toml_section_exists(const char* section);
@@ -364,20 +387,20 @@ float toml_get_float(const char* section, const char* key, float default_val);
 int toml_get_string(const char* section, const char* key, char* buf, uint32_t buf_size, const char* default_val);
 ```
 
-Reads per-mod TOML configuration from `mods/config/<mod_name>.toml`. If the TOML file does not exist, the loader falls back to the INI path for legacy config APIs.
+从 `mods/config/<mod_name>.toml` 读取单 Mod TOML 配置。若 TOML 文件不存在，旧的配置 API 仍会回退到 INI 路径。
 
-Parameters:
-- `section`: TOML table name, for example `"config"`, `"graphics"`, or `"features"`.
-- `key`: key inside the table.
-- `default_val`: value returned when the section/key is missing or invalid.
-- `buf` / `buf_size`: destination buffer for strings.
+参数：
+- `section`：TOML 表名，例如 `"config"`、`"graphics"`、`"features"`。
+- `key`：表内键名。
+- `default_val`：section / key 缺失或类型无效时返回的默认值。
+- `buf` / `buf_size`：字符串输出缓冲区。
 
-Return values:
-- `toml_section_exists`: `1` if the table exists, otherwise `0`.
-- Other getters return parsed value or the default.
-- `toml_get_string` returns written length.
+返回值：
+- `toml_section_exists`：表存在返回 `1`，否则 `0`。
+- 其他 getter 返回解析值或默认值。
+- `toml_get_string` 返回写入长度。
 
-Example:
+示例：
 
 ```c
 if (api->toml_section_exists("graphics")) {
@@ -388,16 +411,16 @@ if (api->toml_section_exists("graphics")) {
 }
 ```
 
-### Manifest path
+### Manifest 路径
 
 ```c
 typedef const char* (*ChuModGetManifestPathFunc)(void);
 const char* get_manifest_path(void);
 ```
 
-Returns the current mod manifest path (`mods/manifest/<mod_name>.toml`) or `NULL` if no manifest exists.
+返回当前 Mod 的 manifest 路径（`mods/manifest/<mod_name>.toml`），没有 manifest 时返回 `NULL`。
 
-Example:
+示例：
 
 ```c
 const char* manifest = api->get_manifest_path ? api->get_manifest_path() : NULL;
@@ -408,34 +431,72 @@ if (manifest) {
 
 ## v3 API
 
-### Hot reload
+### 热重载
 
 ```c
 typedef int (*ChuModReloadModFunc)(const char* mod_name);
 int reload_mod(const char* mod_name);
 ```
 
-Reloads a currently loaded mod by display name, file name, or file stem. The loader calls the target mod's `chumod_shutdown`, unloads the DLL with `FreeLibrary`, loads it again, then calls `chumod_init` and `chumod_on_ready` if present. The whole flow is panic-guarded and logged.
+按显示名、DLL 文件名或文件 stem 热重载一个当前已加载的 Mod。Loader 会调用目标 Mod 的 `chumod_shutdown`，用 `FreeLibrary` 卸载 DLL，再重新加载，然后调用 `chumod_init` 和可选的 `chumod_on_ready`。整个流程会被 panic guard 包裹并记录日志。
 
-Parameters:
-- `mod_name`: display name, DLL file name (`example.dll`), or file stem (`example`).
+参数：
+- `mod_name`：显示名、DLL 文件名（`example.dll`）或文件 stem（`example`）。
 
-Return value: `0` on success, non-zero on failure.
+返回值：成功为 `0`，失败为非 `0`。
 
-Example:
+示例：
 
 ```c
 if (api->reload_mod) {
     int ret = api->reload_mod("Example Mod");
-    if (ret != 0) api->log_error("reload failed");
+    if (ret != 0) api->log_error("热重载失败");
 }
 ```
 
-External trigger: create `mods/reload.flag` to reload all currently loaded mods. The loader monitor thread deletes the flag after processing.
+外部触发：创建 `mods/reload.flag` 会热重载所有当前已加载的 Mod。Loader 的监视线程处理完后会删除该 flag。
 
-## Mod exports
+## v4 API
 
-All exports are optional except that mods needing the API should export `chumod_init`. Plain DLLs with only `DllMain` are still loaded.
+### d3d9 服务
+
+Loader 代理游戏的 Direct3D 9 设备，向 Mod 暴露每帧回调、帧率锁定，以及设备 / 窗口句柄。这些能力在旧版本中是独立的 `D3D9ProxyAPI`；从 v4 起合并进 `ChuModAPI`。
+
+```c
+typedef void (*ChuModPresentCallback)(void* device);
+typedef void (*ChuModResetCallback)(void* device, uint32_t phase);
+
+int  register_present_callback(ChuModPresentCallback callback);
+int  register_reset_callback(ChuModResetCallback callback);
+int  set_frame_lock(uint32_t fps);
+void* get_d3d9_device(void);
+uintptr_t get_game_hwnd(void);
+```
+
+- `register_present_callback`：每帧在游戏 Present 前调用，`device` 是原生 `IDirect3DDevice9*`；传 `NULL` 清除。适合做 FPS 叠加层 / ImGui 渲染。
+- `register_reset_callback`：在设备 Reset 前后调用。`phase = 0` 为 Reset 前（应释放 `D3DPOOL_DEFAULT` 资源）；`phase = 1` 为 Reset 后（应重建资源）；传 `NULL` 清除。
+- `set_frame_lock`：将渲染帧率锁定为 `fps`；`0` 表示解锁。
+- `get_d3d9_device`：返回当前 `IDirect3DDevice9*`，设备尚未就绪时返回 `NULL`。
+- `get_game_hwnd`：返回游戏窗口 `HWND`（以 `uintptr_t` 表示），不可用时返回 `0`。
+
+返回值：回调注册 / 设置类函数成功返回 `0`，失败返回非零。
+
+示例：
+
+```c
+static void on_present(void* device) {
+    /* 用 IDirect3DDevice9* device 绘制叠加层 */
+}
+
+if (api->register_present_callback) {
+    api->register_present_callback(on_present);
+    api->set_frame_lock(60);
+}
+```
+
+## Mod 导出函数
+
+所有导出都是可选的；需要 API 的 Mod 通常会导出 `chumod_init`。只有 `DllMain` 的 Plain DLL 也会被加载。
 
 ```c
 CHUMOD_API int chumod_init(const ChuModInfo* info, const ChuModAPI* api);
@@ -449,19 +510,19 @@ CHUMOD_API void chumod_on_ready(void);
 CHUMOD_API void chumod_on_frame(void);
 ```
 
-| Export | Loader behavior |
+| 导出 | Loader 行为 |
 | --- | --- |
-| `chumod_init` | Called after the DLL is loaded and dependencies are ready. Return `0` to keep the mod loaded; non-zero skips/unloads it. |
-| `chumod_shutdown` | Called during loader unload before `FreeLibrary`. |
-| `chumod_name` | Returns display name used in logs and dependency resolution. |
-| `chumod_depends` | Returns comma-separated dependency names. |
-| `chumod_version` | Returns mod version metadata. |
-| `chumod_author` | Returns mod author metadata. |
-| `chumod_min_loader_version` | Returns minimum required loader version, e.g. `"2.1.0"`. |
-| `chumod_on_ready` | Called after all successful `chumod_init` calls finish. |
-| `chumod_on_frame` | Called by the loader fallback frame loop after `chumod_on_ready`; current implementation uses a 16 ms interval thread. |
+| `chumod_init` | DLL 加载且依赖就绪后调用。返回 `0` 表示继续保留；非 `0` 会被跳过并卸载。 |
+| `chumod_shutdown` | Loader 卸载期间、`FreeLibrary` 前调用。 |
+| `chumod_name` | 返回用于日志和依赖解析的显示名。 |
+| `chumod_depends` | 返回逗号分隔的依赖名。 |
+| `chumod_version` | 返回 Mod 版本元数据。 |
+| `chumod_author` | 返回 Mod 作者元数据。 |
+| `chumod_min_loader_version` | 返回最低 Loader 版本要求，例如 `"2.1.0"`。 |
+| `chumod_on_ready` | 所有成功的 `chumod_init` 完成后调用。 |
+| `chumod_on_frame` | `chumod_on_ready` 之后由 Loader 兜底帧循环调用；当前实现使用 16ms 间隔线程。 |
 
-Example:
+示例：
 
 ```c
 static const ChuModAPI* g_api = NULL;
@@ -480,7 +541,7 @@ CHUMOD_API int chumod_init(const ChuModInfo* info, const ChuModAPI* api) {
 }
 
 CHUMOD_API void chumod_on_ready(void) {
-    g_api->log_info("all mods are ready");
+    g_api->log_info("所有 Mod 就绪");
 }
 
 CHUMOD_API void chumod_shutdown(void) {
@@ -490,7 +551,7 @@ CHUMOD_API void chumod_shutdown(void) {
 
 ## `CHUMOD_DUAL_MODE`
 
-`CHUMOD_DUAL_MODE(init_func)` helps a mod support both ChuModLoader and standalone injection. Loader mode calls `chumod_init`; standalone mode starts a delayed fallback thread from `DllMain` and calls the same initializer with best-effort game information.
+`CHUMOD_DUAL_MODE(init_func)` 让同一个 Mod 同时支持 ChuModLoader 加载和独立注入。Loader 模式会调用 `chumod_init`；独立注入模式会从 `DllMain` 启动一个延迟兜底线程，并用尽力获取的游戏信息调用同一个初始化函数。
 
 ```c
 static int my_init(const ChuModInfo* info, const ChuModAPI* api) {
@@ -511,4 +572,4 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved) {
 }
 ```
 
-In standalone fallback, many API function pointers are `NULL`; always check before use.
+独立兜底模式下，大多数 API 函数指针是 `NULL`；调用前必须检查。

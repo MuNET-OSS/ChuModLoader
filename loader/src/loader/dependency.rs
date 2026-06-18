@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use windows_sys::Win32::System::LibraryLoader::GetProcAddress;
 
-use crate::types::ChuModDependsFunc;
+use chu_abi::ChuModDependsFunc;
 
 use super::log::log_info;
 use super::state::HMODULE;

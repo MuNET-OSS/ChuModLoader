@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
 
-use crate::types::{ChuModFrameFunc, ChuModReadyFunc, ChuModShutdownFunc};
+use chu_abi::{ChuModFrameFunc, ChuModReadyFunc, ChuModShutdownFunc};
 
 pub type HMODULE = *mut c_void;
 

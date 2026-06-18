@@ -1,35 +1,53 @@
-# ChuModLoader Mod Development Guide (v3.0.0)
+# ChuModLoader Mod 开发指南（v4.0.0）
 
-ChuModLoader is a `version.dll` proxy that loads mod DLLs from `mods/` when `chusanApp.exe` starts. Mods can be written in several ways and can opt into progressively richer APIs.
+ChuModLoader 是一个 `winhttp.dll` 代理，会在 `chusanApp.exe` 启动时从 `mods/` 加载 Mod DLL。Mod 可以用多种方式编写，并按需接入更丰富的 API。
 
-## Three ways to write a mod
+完整的 C ABI 函数表和导出说明见 [API 参考](api-reference.md)。
 
-1. **Rust mod**: build a Win32 DLL exporting `extern "C"` functions with `#[no_mangle]`.
-2. **C/C++ mod**: include `include/chumod.h`, export `CHUMOD_API` functions, and call the provided `ChuModAPI` table.
-3. **Plain DLL**: provide only `DllMain`. ChuModLoader still loads the DLL, but no API callbacks are invoked unless the matching exports exist.
+## 目录
 
-All new exports are optional. Existing mods that only provide `chumod_init`, `chumod_shutdown`, and `chumod_name` continue to work.
+- [三种 Mod 方式](#三种-mod-方式)
+- [Loader 生命周期](#loader-生命周期)
+- [Quick Start：Rust](#quick-startrust)
+- [Quick Start：C++](#quick-startc)
+- [TOML 配置](#toml-配置)
+- [`manifest.toml` 格式](#manifesttoml-格式)
+- [依赖声明](#依赖声明)
+- [崩溃保护](#崩溃保护)
+- [分级日志](#分级日志)
+- [Dual Mode](#dual-mode)
+- [最低 Loader 版本](#最低-loader-版本)
+- [热重载](#热重载)
+- [d3d9 渲染服务](#d3d9-渲染服务)
 
-## Loader lifecycle
+## 三种 Mod 方式
 
-For API-aware mods, the lifecycle is:
+1. **Rust Mod**：构建 Win32 DLL，导出带 `#[no_mangle]` 的 `extern "C"` 函数。
+2. **C/C++ Mod**：包含 `include/chumod.h`，导出 `CHUMOD_API` 函数，并调用 `ChuModAPI` 函数表。
+3. **Plain DLL**：只提供 `DllMain`。ChuModLoader 仍会加载 DLL；除非存在匹配导出，否则不会调用 API 回调。
+
+所有新增导出都是可选的。只提供 `chumod_init`、`chumod_shutdown`、`chumod_name` 的旧 Mod 会继续工作。
+
+## Loader 生命周期
+
+对接入 API 的 Mod，生命周期如下：
 
 ```text
 LoadLibrary(mod.dll)
-  -> optional metadata/dependency exports are read
+  -> 读取可选 metadata/dependency 导出
   -> chumod_init(info, api)
-  -> after every successful mod init: chumod_on_ready()
-  -> optional repeated frame event: chumod_on_frame()
-  -> game keeps running
+  -> 所有成功初始化的 Mod 完成后：chumod_on_ready()
+  -> 可选重复帧事件：chumod_on_frame()
+  -> 游戏运行中
   -> chumod_shutdown()
   -> FreeLibrary(mod.dll)
 ```
 
-Use `chumod_init` for local setup and hook creation. Use `chumod_on_ready` when you need other mods' services to exist. Use `chumod_shutdown` to disable hooks and release resources.
+`chumod_init` 适合本地初始化和 hook 创建。需要等待其他 Mod 服务存在时，使用 `chumod_on_ready`。`chumod_shutdown` 中应禁用 hook 并释放资源。
 
-`chumod_on_frame` is optional. v3.0.0 uses a 16 ms fallback frame loop after `chumod_on_ready` for mods that export it.
+`chumod_on_frame` 是可选导出。v4.0.0 会在 `chumod_on_ready` 之后，对导出它的 Mod 启动 16ms 间隔的兜底帧循环。
 
-## Quick Start: Rust
+## Quick Start：Rust
 
 ```rust
 use std::ffi::{c_char, c_void, CStr};
@@ -45,7 +63,6 @@ pub struct ChuModInfo {
     pub text_size: u32,
     pub rdata_base: usize,
     pub rdata_size: u32,
-    pub game_version: *const c_char,
 }
 
 #[repr(C)]
@@ -120,9 +137,6 @@ pub unsafe extern "C" fn chumod_init(info: *const ChuModInfo, api: *const ChuMod
             return 1;
         }
     }
-    if !(*info).game_version.is_null() {
-        let _version = CStr::from_ptr((*info).game_version).to_string_lossy();
-    }
     0
 }
 
@@ -145,9 +159,9 @@ pub unsafe extern "C" fn chumod_shutdown() {
 }
 ```
 
-Build as a 32-bit Windows DLL and place it in `mods/`.
+编译为 32 位 Windows DLL 后放入 `mods/`。
 
-## Quick Start: C++
+## Quick Start：C++
 
 ```cpp
 #include "chumod.h"
@@ -162,11 +176,10 @@ CHUMOD_API const char* chumod_min_loader_version() { return "2.5.0"; }
 CHUMOD_API int chumod_init(const ChuModInfo* info, const ChuModAPI* api) {
     g_api = api;
     api->log_info("C++ mod initialized");
-    api->log("game base=0x%08X text=0x%08X size=0x%X version=%s",
+    api->log("game base=0x%08X text=0x%08X size=0x%X",
              (unsigned)info->game_base,
              (unsigned)info->text_base,
-             info->text_size,
-             info->game_version ? info->game_version : "");
+             info->text_size);
 
     if (api->toml_section_exists && api->toml_section_exists("config")) {
         int enabled = api->toml_get_bool("config", "enabled", 1);
@@ -181,7 +194,7 @@ CHUMOD_API void chumod_on_ready() {
 }
 
 CHUMOD_API void chumod_on_frame() {
-    // called from the loader fallback frame loop
+    // 由 Loader 兜底帧循环调用
 }
 
 CHUMOD_API void chumod_shutdown() {
@@ -189,15 +202,15 @@ CHUMOD_API void chumod_shutdown() {
 }
 ```
 
-## TOML configuration
+## TOML 配置
 
-ChuModLoader v2.5 can read per-mod TOML files from:
+ChuModLoader v2.5 可从以下路径读取单 Mod TOML 文件：
 
 ```text
 mods/config/<mod_name>.toml
 ```
 
-Example:
+示例：
 
 ```toml
 [config]
@@ -210,7 +223,7 @@ scale = 1.25
 show_overlay = false
 ```
 
-Use the TOML API for structured config:
+使用 TOML API 读取结构化配置：
 
 ```c
 int fps = api->toml_get_int("graphics", "target_fps", 60);
@@ -221,7 +234,7 @@ char profile[64];
 api->toml_get_string("config", "profile", profile, sizeof(profile), "default");
 ```
 
-Legacy INI APIs still use `mods/config/<mod_name>.ini` and the `[config]` section:
+旧 INI API 仍使用 `mods/config/<mod_name>.ini` 和 `[config]` section：
 
 ```ini
 [config]
@@ -229,17 +242,17 @@ enabled=true
 target_fps=120
 ```
 
-If a TOML file exists, v2.5 loads it for TOML getters. INI setters still write INI files.
+如果 TOML 文件存在，v2.5 会为 TOML getter 加载它。INI setter 仍写入 INI 文件。
 
-## `manifest.toml` format
+## `manifest.toml` 格式
 
-Per-mod manifests live at:
+单 Mod manifest 位于：
 
 ```text
 mods/manifest/<mod_name>.toml
 ```
 
-Recommended format:
+推荐格式：
 
 ```toml
 [mod]
@@ -254,16 +267,16 @@ en = "Example gameplay enhancement."
 zh_cn = "示例玩法增强。"
 ```
 
-The C ABI metadata exports are still authoritative for runtime loading. Manifests are useful for tools, launchers, and human-readable packaging. A mod can query its own manifest path:
+C ABI metadata 导出仍是运行时加载的权威来源。Manifest 更适合工具、启动器和人工打包说明。Mod 可查询自己的 manifest 路径：
 
 ```c
 const char* path = api->get_manifest_path ? api->get_manifest_path() : NULL;
 if (path) api->log_info(path);
 ```
 
-## Dependency declaration
+## 依赖声明
 
-Export `chumod_depends` to request load ordering. Return comma-separated display names or file stems used by the dependency resolver.
+导出 `chumod_depends` 可请求加载顺序。返回依赖名的逗号分隔列表，通常使用显示名或文件 stem。
 
 ```c
 CHUMOD_API const char* chumod_depends() {
@@ -271,34 +284,34 @@ CHUMOD_API const char* chumod_depends() {
 }
 ```
 
-The loader sorts mods before calling `chumod_init`. If dependencies cannot be satisfied, the loader logs the problem and continues with a best-effort order.
+Loader 会在调用 `chumod_init` 前排序 Mod。如果依赖无法满足，Loader 会记录问题并以尽力顺序继续。
 
-## Crash protection
+## 崩溃保护
 
-ChuModLoader wraps `chumod_init`, `chumod_on_ready`, `chumod_on_frame`, and `chumod_shutdown` with Rust `catch_unwind`. v3.0.0 also installs a top-level SEH filter that writes minidumps and readable crash logs to `mods/crash/`. This does **not** make arbitrary memory faults safe: access violations in native code can still terminate the process after the dump is written.
+ChuModLoader 使用 Rust `catch_unwind` 包裹 `chumod_init`、`chumod_on_ready`、`chumod_on_frame` 和 `chumod_shutdown`。v4.0.0 还会安装顶层 SEH 过滤器，把可读 crash 报告和诊断 zip 写到 `mods/crash/`，然后弹出原生崩溃窗口。这**不能**保证任意内存错误安全：native 代码访问冲突仍可能在写出报告后终止进程。
 
-Guidelines:
+建议：
 
-- Validate addresses before patching.
-- Disable hooks in `chumod_shutdown`.
-- Keep exported callbacks small and deterministic.
-- Do not throw C++ exceptions across the C ABI boundary.
+- patch 前验证地址。
+- 在 `chumod_shutdown` 中禁用 hook。
+- 导出回调保持短小、确定。
+- 不要让 C++ 异常跨越 C ABI 边界。
 
-## Leveled logging
+## 分级日志
 
-v2.5 adds plain leveled logging:
+v2.5 新增普通分级日志：
 
 ```c
-api->log_info("normal status");
-api->log_warn("recoverable problem");
-api->log_error("operation failed");
+api->log_info("正常状态");
+api->log_warn("可恢复的问题");
+api->log_error("操作失败");
 ```
 
-Use `api->log` when formatting is convenient, but prefer the plain APIs for cross-language mods. During `chumod_init`, `api->log_path` points to the mod-specific log path under `mods/log/`.
+需要格式化时可用 `api->log`，但跨语言 Mod 优先使用普通日志 API。在 `chumod_init` 期间，`api->log_path` 指向 `mods/log/` 下的当前 Mod 日志路径。
 
 ## Dual Mode
 
-`CHUMOD_DUAL_MODE(init_func)` lets one DLL work both with ChuModLoader and as a standalone injected DLL.
+`CHUMOD_DUAL_MODE(init_func)` 让一个 DLL 同时支持 ChuModLoader 和独立注入。
 
 ```cpp
 static int my_init(const ChuModInfo* info, const ChuModAPI* api) {
@@ -316,11 +329,11 @@ BOOL APIENTRY DllMain(HMODULE, DWORD reason, LPVOID) {
 }
 ```
 
-In standalone mode, the fallback `ChuModAPI` only contains `struct_size`; most function pointers are `NULL`. Always check pointers before calling.
+独立模式下，兜底 `ChuModAPI` 通常只有 `struct_size`；大多数函数指针为 `NULL`。调用前必须检查。
 
-## Minimum loader version
+## 最低 Loader 版本
 
-Export `chumod_min_loader_version` if the mod requires APIs added in a specific loader version.
+如果 Mod 需要某个 Loader 版本新增的 API，导出 `chumod_min_loader_version`。
 
 ```c
 CHUMOD_API const char* chumod_min_loader_version() {
@@ -328,11 +341,11 @@ CHUMOD_API const char* chumod_min_loader_version() {
 }
 ```
 
-Also guard individual fields with `struct_size` and null checks when distributing binaries to users with unknown loader versions.
+面向未知 Loader 版本用户分发二进制时，也要通过 `struct_size` 和空指针检查保护单个字段。
 
-## Hot reload
+## 热重载
 
-v3.0.0 adds `api->reload_mod`. It reloads an already-loaded mod by display name, file name, or file stem.
+v4.0.0 新增 `api->reload_mod`。它可以按显示名、文件名或文件 stem 热重载一个已加载 Mod。
 
 ```c
 if (api->reload_mod) {
@@ -340,4 +353,37 @@ if (api->reload_mod) {
 }
 ```
 
-You can also create `mods/reload.flag` to reload all currently loaded mods. The loader removes the flag after processing.
+也可以创建 `mods/reload.flag` 触发所有当前已加载 Mod 热重载。Loader 处理完会删除该 flag。
+
+## d3d9 渲染服务
+
+v4.0.0 把 Direct3D 9 设备代理合并进了 `ChuModAPI`。Mod 可以注册每帧回调、锁定帧率，并获取原生设备与窗口句柄，用于绘制 FPS 叠加层、ImGui 界面等。
+
+```c
+static void on_present(void* device) {
+    // device 是原生 IDirect3DDevice9*，在游戏每帧 Present 前调用
+    // 在这里绘制叠加层
+}
+
+static void on_reset(void* device, uint32_t phase) {
+    if (phase == 0) {
+        // Reset 前：释放 D3DPOOL_DEFAULT 资源
+    } else {
+        // Reset 后：重建资源
+    }
+}
+
+CHUMOD_API void chumod_on_ready(void) {
+    if (g_api->register_present_callback) {
+        g_api->register_present_callback(on_present);
+        g_api->register_reset_callback(on_reset);
+        g_api->set_frame_lock(60); // 锁 60 FPS，传 0 解锁
+    }
+}
+```
+
+- 设备可能尚未就绪，调用 `get_d3d9_device()` 前应检查返回值是否为 `NULL`。
+- 注册回调和处理 Reset 是叠加层稳定运行的关键：设备 Reset 时若不释放 `D3DPOOL_DEFAULT` 资源会导致 Reset 失败。
+- `get_game_hwnd()` 返回游戏窗口句柄，便于处理输入或窗口相关逻辑。
+
+各函数的完整签名与返回值见 [API 参考 · v4 API](api-reference.md#v4-api)。

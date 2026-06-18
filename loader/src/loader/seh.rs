@@ -1,6 +1,6 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use crate::types::{
+use chu_abi::{
     ChuModAPI, ChuModFrameFunc, ChuModInfo, ChuModInitFunc, ChuModReadyFunc, ChuModShutdownFunc,
 };
 

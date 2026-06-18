@@ -2,12 +2,19 @@
 name = "chumod-loader"
 version = "1.0.0"
 edition = "2021"
+license = "Apache-2.0"
 
 [lib]
-name = "version"
+name = "winhttp"
+path = "src/lib.rs"
 crate-type = ["cdylib"]
 
+[features]
+proxy-winhttp = []
+default = ["proxy-winhttp"]
+
 [dependencies]
+chu-abi = { path = "../chu-abi" }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_System_LibraryLoader",
@@ -20,6 +27,11 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Kernel",
     "Win32_System_ProcessStatus",
     "Win32_Storage_FileSystem",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_Graphics_Gdi",
+    "Win32_Security_Cryptography",
+    "Win32_System_Registry",
 ] }
 retour = "0.4.0-alpha.4"
 once_cell = "1"

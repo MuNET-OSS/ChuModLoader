@@ -1,6 +1,10 @@
-pub mod dependency;
+pub mod console;
 pub mod crash_dump;
+pub mod crash_ui;
+pub mod crash_zip;
+pub mod dependency;
 pub mod frame_hook;
+pub mod hash;
 pub mod hot_reload;
 pub mod log;
 pub mod metadata;
@@ -13,24 +17,21 @@ use std::ffi::{c_char, CStr};
 use std::fs::File;
 
 use windows_sys::Win32::Foundation::GetLastError;
-use windows_sys::Win32::System::Console::{
-    AttachConsole, GetStdHandle, SetConsoleOutputCP, ATTACH_PARENT_PROCESS, STD_OUTPUT_HANDLE,
-};
 use windows_sys::Win32::System::LibraryLoader::{
     GetModuleHandleA, GetProcAddress, LoadLibraryA,
 };
 
-use crate::api_impl;
-use crate::types::{
+use chu_abi::{
     ChuModFrameFunc, ChuModInfo, ChuModInitFunc, ChuModNameFunc, ChuModReadyFunc,
-    ChuModShutdownFunc,
-    CHUMOD_API_VERSION,
+    ChuModShutdownFunc, CHUMOD_API_VERSION,
 };
+
+use crate::api_impl;
 
 use self::dependency::{read_dependencies, sort_mods, PendingMod};
 use self::log::{log_info, write_log_inner, write_log_variadic};
 use self::metadata::{read_metadata, should_load_metadata};
-use self::pe::{get_self_base_dir, parse_game_info, read_game_version};
+use self::pe::{get_self_base_dir, parse_game_info};
 use self::scanner::{ensure_mods_dir, scan_manifest_files, scan_mod_files};
 use self::seh::{call_mod_init, call_mod_on_ready, call_mod_shutdown};
 use self::state::{LoadedMod, STATE};
@@ -46,19 +47,14 @@ pub unsafe fn load_mods() {
     }
     state.loaded = true;
 
-    state.console = GetStdHandle(STD_OUTPUT_HANDLE);
-    if state.console.is_null() || state.console == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
-        AttachConsole(ATTACH_PARENT_PROCESS);
-        state.console = GetStdHandle(STD_OUTPUT_HANDLE);
-    }
-    SetConsoleOutputCP(65001);
+    console::init(&mut state);
 
     let base_dir = match get_self_base_dir() {
         Some(d) => d,
         None => return,
     };
     state.base_dir = base_dir.clone();
-    state.log_file = File::create(format!("{}\\chusan_loader.log", base_dir)).ok();
+    state.log_file = File::create(format!("{}\\chumod_loader.log", base_dir)).ok();
     write_log_inner(&mut state, &format!("loader start: base={}", base_dir));
     drop(state);
 
@@ -70,11 +66,6 @@ pub unsafe fn load_mods() {
     } else {
         (0, 0, 0, 0, 0)
     };
-    let game_version = read_game_version(&base_dir).unwrap_or_default();
-    if !game_version.is_empty() {
-        log_info(&format!("game version: {}", game_version));
-    }
-    let game_version_c = std::ffi::CString::new(game_version).unwrap_or_default();
     api_impl::set_rtti_info(rdata_base, rdata_size as usize, text_base);
 
     let mods_dir = ensure_mods_dir(&base_dir);
@@ -155,7 +146,6 @@ pub unsafe fn load_mods() {
                 text_size,
                 rdata_base,
                 rdata_size,
-                game_version: game_version_c.as_ptr(),
             };
 
             let config_dir = format!("{}\\mods\\config", base_dir);
