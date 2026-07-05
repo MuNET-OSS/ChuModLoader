@@ -37,17 +37,11 @@ jobs:
       - name: Build
         run: cargo build --release
 
-      - name: Upload version.dll
+      - name: Upload winhttp.dll
         uses: actions/upload-artifact@v4
         with:
-          name: version.dll
-          path: target/i686-pc-windows-msvc/release/version.dll
-
-      - name: Upload d3d9.dll
-        uses: actions/upload-artifact@v4
-        with:
-          name: d3d9.dll
-          path: target/i686-pc-windows-msvc/release/d3d9.dll
+          name: winhttp.dll
+          path: target/i686-pc-windows-msvc/release/winhttp.dll
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -58,14 +52,9 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: version.dll
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: d3d9.dll
+          name: winhttp.dll
 
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            version.dll
-            d3d9.dll
+            winhttp.dll
