@@ -3,6 +3,7 @@
 
 mod api_impl;
 mod d3d9;
+mod early_patch;
 mod loader;
 
 use std::ffi::c_void;
@@ -140,6 +141,7 @@ unsafe extern "system" fn DllMain(h_module: HMODULE, reason: u32, _reserved: *mu
         DLL_PROCESS_ATTACH => {
             DisableThreadLibraryCalls(h_module);
             install_entry_hijack();
+            early_patch::apply_appuser(HIJACK.game_base);
         }
         DLL_PROCESS_DETACH if _reserved.is_null() => {
             loader::unload_mods();
