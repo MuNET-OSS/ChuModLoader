@@ -1,5 +1,10 @@
 # ChuModLoader
 
+> [!WARNING]
+> ### DEPRECATED
+>
+> 现在，ChuModLoader 的全部功能已经移动到 [AppleChu](https://github.com/MuNET-OSS/AppleChu)，请直接安装 AppleChu 即可使用全部功能。
+
 <p align="center">
   <strong>CHUNITHM Mod 加载框架</strong>
 </p>
